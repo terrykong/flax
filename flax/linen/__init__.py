@@ -126,6 +126,7 @@ from .recurrent import (
   RNN as RNN,
   RNNCellBase as RNNCellBase,
   Bidirectional as Bidirectional,
+  CudnnLSTM as CudnnLSTM,
 )
 from .stochastic import Dropout as Dropout
 from .transforms import (
