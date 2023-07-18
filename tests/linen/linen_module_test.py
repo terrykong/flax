@@ -75,6 +75,17 @@ class Dense(nn.Module):
     y = jnp.dot(x, kernel)
     return y
 
+class IdentityModule(nn.Module):
+
+  def __call__(self, x):
+    return x
+
+
+class RaisesModule(nn.Module):
+
+  def __call__(self):
+    assert False
+
 
 class ModuleTest(absltest.TestCase):
 
@@ -2416,6 +2427,70 @@ class RelaxedNamingTests(absltest.TestCase):
     x = jnp.zeros((1,))
     with self.assertRaises(errors.NameInUseError):
       vs = foo.init(k, x)
+
+  def test_intercept_methods(self):
+    mod = IdentityModule(parent=None)
+    x = jnp.ones([])
+    call_count = []
+
+    def add_one_interceptor(f, args, kwargs, context):
+      call_count.append(None)
+      self.assertLen(dataclasses.fields(context), 3)
+      self.assertIs(context.module, mod)
+      self.assertEqual(context.method_name, "__call__")
+      self.assertEqual(context.orig_method(3), 3)
+      self.assertEqual(args, (x,))
+      self.assertEmpty(kwargs)
+      y = f(*args, **kwargs)
+      return y + 1
+
+    y1 = mod(x)
+    with nn.intercept_methods(add_one_interceptor):
+      y2 = mod(x)
+    y3 = mod(x)
+
+    self.assertLen(call_count, 1)
+    self.assertEqual(y1, 1)
+    self.assertEqual(y2, 2)
+    self.assertEqual(y3, 1)
+
+  def test_intercept_methods_calling_underlying_optional(self):
+    def do_nothing_interceptor(f, args, kwargs, context):
+      del f, context
+      self.assertEmpty(args)
+      self.assertEmpty(kwargs)
+
+    m = RaisesModule()
+    with nn.intercept_methods(do_nothing_interceptor):
+      m()
+
+    with self.assertRaises(AssertionError):
+      m()
+
+    with nn.intercept_methods(do_nothing_interceptor):
+      m()
+
+  def test_intercept_methods_run_in_lifo_order(self):
+    def op_interceptor(op):
+      def _interceptor(f, args, kwargs, context):
+        del context
+        y = f(*args, **kwargs)
+        return op(y)
+      return _interceptor
+
+    mod = IdentityModule(parent=None)
+    x = 7
+    with nn.intercept_methods(op_interceptor(lambda a: a + 1)), \
+         nn.intercept_methods(op_interceptor(lambda a: a ** 2)):
+      y = mod(x)
+
+    self.assertEqual(y, (x ** 2) + 1)
+
+    with nn.intercept_methods(op_interceptor(lambda a: a ** 2)), \
+         nn.intercept_methods(op_interceptor(lambda a: a + 1)):
+      y = mod(x)
+
+    self.assertEqual(y, (x + 1) ** 2)
 
 
 class FrozenDictTests(absltest.TestCase):

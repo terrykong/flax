@@ -105,7 +105,8 @@ from .module import (
   init_with_output as init_with_output,
   merge_param as merge_param,
   nowrap as nowrap,
-  override_named_call as override_named_call
+  override_named_call as override_named_call,
+  intercept_methods as intercept_methods,
 )
 from .normalization import (
   BatchNorm as BatchNorm,
