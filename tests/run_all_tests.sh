@@ -117,6 +117,9 @@ if $RUN_PYTEST; then
   for egd in $(find examples -maxdepth 1 -mindepth 1 -type d); do
       pytest $egd
   done
+
+  # Run nnx tests
+  pytest -n auto flax/experimental/nnx/tests $PYTEST_OPTS $PYTEST_IGNORE
 fi
 
 if $RUN_PYTYPE; then
