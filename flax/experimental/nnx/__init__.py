@@ -117,3 +117,6 @@ from .nnx.transforms import (
     remat as remat,
     scan as scan,
 )
+from .nnx import (
+    compatibility as compatibility,
+)

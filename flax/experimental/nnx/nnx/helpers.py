@@ -56,7 +56,7 @@ class Dict(Module, tp.Mapping[str, A]):
     super().__setattr__(key, value)
 
   def __iter__(self) -> tp.Iterator[str]:
-    return iter(vars(self))
+    return (k for k in vars(self) if k != "_module__state")
 
   def __len__(self) -> int:
     return len(vars(self))

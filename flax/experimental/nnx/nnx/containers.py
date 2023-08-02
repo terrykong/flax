@@ -28,6 +28,8 @@ B = tp.TypeVar("B")
 F = tp.TypeVar("F", bound=tp.Callable[..., tp.Any])
 Sharding = tp.Tuple[tp.Optional[str], ...]
 
+VariableTypeCache: tp.Dict[str, tp.Type["Variable[tp.Any]"]] = {}
+
 
 @dataclasses.dataclass
 class ContainerMetadata(tp.Generic[A]):
@@ -218,6 +220,18 @@ def with_metadata(
 
   return wrapper  # type: ignore
 
+
+def variable_type(name: str) -> tp.Type[Variable[tp.Any]]:
+  if name not in VariableTypeCache:
+    VariableTypeCache[name] = type(name, (Variable,), {})
+  return VariableTypeCache[name]
+
+
+# add known variable type names
+VariableTypeCache["params"] = Param
+VariableTypeCache["batch_stats"] = BatchStat
+VariableTypeCache["cache"] = Cache
+VariableTypeCache["intermediates"] = Intermediate
 
 # register nodes
 nodes.register_node_type(Node)
