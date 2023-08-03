@@ -113,6 +113,7 @@ from .nnx.transforms import (
     Remat as Remat,
     Scan as Scan,
     grad as grad,
+    value_and_grad as value_and_grad,
     jit as jit,
     remat as remat,
     scan as scan,
