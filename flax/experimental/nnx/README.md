@@ -129,7 +129,7 @@ assert model.count == 2
 ## FAQs
 
 ### Status
-NNX is still in early development so expect bugs and breaking changes. That said, current API is the result of months of experimentation and we don't expect any major changes in the near future.
+NNX is still in early development so expect bugs and breaking changes.
 
 ### How is it different from Flax?
 NNX takes the best features that allow Flax to scale to large projects and integrates them into a much simpler Module system with pythonic semantics.
