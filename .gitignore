@@ -13,4 +13,6 @@ build/
 .vscode/*
 /.devcontainer
 docs/**/tmp
-/tmp-files
+
+# used by direnv
+.envrc
