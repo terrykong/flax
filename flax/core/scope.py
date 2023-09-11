@@ -26,6 +26,7 @@ from typing import (
     Dict,
     Generic,
     Iterable,
+    Literal,
     Mapping,
     Optional,
     Sequence,
@@ -33,6 +34,8 @@ from typing import (
     Tuple,
     TypeVar,
     Union,
+    cast,
+    overload,
 )
 
 from flax import config as config
@@ -440,6 +443,7 @@ class Scope:
       mutable: CollectionFilter = False,
       parent: Optional['Scope'] = None,
       path: Iterable[str] = (),
+      debug_path: Iterable[str] = (),
       flags: Optional[Mapping] = None,
   ):
     """Initializes a Scope.
@@ -450,7 +454,9 @@ class Scope:
       name: name of this scope.
       mutable: A CollectionFilter determining which variables are mutable.
       parent: The parent scope.
-      path: The path in the variable tree from the root scope to this scope.
+      path: The path in the variable tree from the root scope to this scope. It
+        exactly matches the module path.
+      debug_path: Similar to path but could contain transformation decorators.
       flags: internal flags.
     """
     rngs = {k: LazyRng.create(v) for k, v in rngs.items()} if rngs else {}
@@ -458,6 +464,7 @@ class Scope:
     self.parent = parent
     self.name = name
     self.path = tuple(path)
+    self.debug_path = tuple(debug_path) or self.path
     self.rngs = rngs
     self.mutable = mutable
     self.flags = freeze({} if flags is None else flags)
@@ -494,8 +501,8 @@ class Scope:
 
   @property
   def path_text(self) -> str:
-    """Returns the path as a human readable string with slashes between parts."""
-    return '/' + '/'.join(self.path)
+    """Returns the debug path as a human readable string."""
+    return '/' + '/'.join(self.debug_path)
 
   @property
   def invalid(self) -> bool:
@@ -556,6 +563,7 @@ class Scope:
         self.mutable,
         self.parent,
         path=self.path,
+        debug_path=self.debug_path,
         flags=self.flags,
     )
     if not rewind_rngs:
@@ -648,6 +656,7 @@ class Scope:
         parent=self,
         mutable=self.mutable,
         path=self.path + (name,),
+        debug_path=self.debug_path + (name,),
         flags=self.flags,
     )
     scope.rng_counters = rng_counters
@@ -816,6 +825,49 @@ class Scope:
 
     put(variables, name, value)
 
+  @overload
+  def variable(
+      self,
+      col: str,
+      name: str,
+      init_fn: Optional[Callable[..., T]] = None,
+      *init_args,
+  ) -> Variable[T]:
+    ...
+
+  @overload
+  def variable(
+      self,
+      col: str,
+      name: str,
+      init_fn: Optional[Callable[..., T]] = None,
+      *init_args,
+      unbox: Literal[True],
+  ) -> Variable[T]:
+    ...
+
+  @overload
+  def variable(
+      self,
+      col: str,
+      name: str,
+      init_fn: Optional[Callable[..., T]] = None,
+      *init_args,
+      unbox: Literal[False],
+  ) -> Variable[meta.AxisMetadata[T]]:
+    ...
+
+  @overload
+  def variable(
+      self,
+      col: str,
+      name: str,
+      init_fn: Optional[Callable[..., T]] = None,
+      *init_args,
+      unbox: bool = True,
+  ) -> Union[Variable[T], Variable[meta.AxisMetadata[T]]]:
+    ...
+
   def variable(
       self,
       col: str,
@@ -823,7 +875,7 @@ class Scope:
       init_fn: Optional[Callable[..., T]] = None,
       *init_args,
       unbox: bool = True,
-  ) -> Variable[T]:
+  ) -> Union[Variable[T], Variable[meta.AxisMetadata[T]]]:
     """Creates a variable if it doesn't exist yet in this scope and returns it.
 
     Args:
@@ -847,11 +899,45 @@ class Scope:
         raise errors.ScopeVariableNotFoundError(name, col, self.path_text)
       init_value = init_fn(*init_args)
       self.put_variable(col, name, init_value)
-    return Variable(self, col, name, unbox=unbox)
+    # cast to make static analyzers happy
+    return cast(
+        Union[Variable[T], Variable[meta.AxisMetadata[T]]],
+        Variable(self, col, name, unbox=unbox),
+    )
+
+  @overload
+  def param(self, name: str, init_fn: Callable[..., T], *init_args) -> T:
+    ...
+
+  @overload
+  def param(
+      self,
+      name: str,
+      init_fn: Callable[..., T],
+      *init_args,
+      unbox: Literal[True],
+  ) -> T:
+    ...
+
+  @overload
+  def param(
+      self,
+      name: str,
+      init_fn: Callable[..., T],
+      *init_args,
+      unbox: Literal[False],
+  ) -> meta.AxisMetadata[T]:
+    ...
+
+  @overload
+  def param(
+      self, name: str, init_fn: Callable[..., T], *init_args, unbox: bool
+  ) -> Union[T, meta.AxisMetadata[T]]:
+    ...
 
   def param(
       self, name: str, init_fn: Callable[..., T], *init_args, unbox: bool = True
-  ) -> T:
+  ) -> Union[T, meta.AxisMetadata[T]]:
     """Creates a parameter if it doesn't exist yet in this scope and returns it.
 
     If the parameter exists already, the existing value is simply returned.

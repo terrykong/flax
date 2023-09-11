@@ -15,10 +15,10 @@
 """Attention core modules for Flax."""
 
 import functools
-from typing import (Any, Callable, Optional, Tuple)
-from flax.linen.dtypes import promote_dtype
+from typing import Any, Callable, Optional, Tuple, Union
 
 from flax.linen import initializers
+from flax.linen.dtypes import promote_dtype
 from flax.linen.linear import default_kernel_init
 from flax.linen.linear import DenseGeneral
 from flax.linen.linear import DotGeneralT
@@ -26,11 +26,13 @@ from flax.linen.linear import PrecisionLike
 from flax.linen.module import compact
 from flax.linen.module import merge_param
 from flax.linen.module import Module
-
+from flax.linen.normalization import LayerNorm
+from flax.linen.partitioning import variable_with_axes
 import jax
 from jax import lax
 from jax import random
 import jax.numpy as jnp
+
 
 PRNGKey = Any
 Shape = Tuple[int, ...]
@@ -57,19 +59,17 @@ def dot_product_attention_weights(
   you can directly call this function and call einsum yourself.
 
   Args:
-    query: queries for calculating attention with shape of
-      `[batch..., q_length, num_heads, qk_depth_per_head]`.
-    key: keys for calculating attention with shape of
-      `[batch..., kv_length, num_heads, qk_depth_per_head]`.
+    query: queries for calculating attention with shape of `[batch..., q_length,
+      num_heads, qk_depth_per_head]`.
+    key: keys for calculating attention with shape of `[batch..., kv_length,
+      num_heads, qk_depth_per_head]`.
     bias: bias for the attention weights. This should be broadcastable to the
-      shape `[batch..., num_heads, q_length, kv_length]`.
-      This can be used for incorporating causal masks, padding masks,
-      proximity bias, etc.
+      shape `[batch..., num_heads, q_length, kv_length]`. This can be used for
+      incorporating causal masks, padding masks, proximity bias, etc.
     mask: mask for the attention weights. This should be broadcastable to the
-      shape `[batch..., num_heads, q_length, kv_length]`.
-      This can be used for incorporating causal masks.
-      Attention weights are masked out if their corresponding mask value
-      is `False`.
+      shape `[batch..., num_heads, q_length, kv_length]`. This can be used for
+      incorporating causal masks. Attention weights are masked out if their
+      corresponding mask value is `False`.
     broadcast_dropout: bool: use a broadcasted dropout along batch dims.
     dropout_rng: JAX PRNGKey: to be used for dropout
     dropout_rate: dropout rate
@@ -145,21 +145,19 @@ def dot_product_attention(
   Note: query, key, value needn't have any batch dimensions.
 
   Args:
-    query: queries for calculating attention with shape of
-      `[batch..., q_length, num_heads, qk_depth_per_head]`.
-    key: keys for calculating attention with shape of
-      `[batch..., kv_length, num_heads, qk_depth_per_head]`.
-    value: values to be used in attention with shape of
-      `[batch..., kv_length, num_heads, v_depth_per_head]`.
+    query: queries for calculating attention with shape of `[batch..., q_length,
+      num_heads, qk_depth_per_head]`.
+    key: keys for calculating attention with shape of `[batch..., kv_length,
+      num_heads, qk_depth_per_head]`.
+    value: values to be used in attention with shape of `[batch..., kv_length,
+      num_heads, v_depth_per_head]`.
     bias: bias for the attention weights. This should be broadcastable to the
-      shape `[batch..., num_heads, q_length, kv_length]`.
-      This can be used for incorporating causal masks, padding masks,
-      proximity bias, etc.
+      shape `[batch..., num_heads, q_length, kv_length]`. This can be used for
+      incorporating causal masks, padding masks, proximity bias, etc.
     mask: mask for the attention weights. This should be broadcastable to the
-      shape `[batch..., num_heads, q_length, kv_length]`.
-      This can be used for incorporating causal masks.
-      Attention weights are masked out if their corresponding mask value
-      is `False`.
+      shape `[batch..., num_heads, q_length, kv_length]`. This can be used for
+      incorporating causal masks. Attention weights are masked out if their
+      corresponding mask value is `False`.
     broadcast_dropout: bool: use a broadcasted dropout along batch dims.
     dropout_rng: JAX PRNGKey: to be used for dropout
     dropout_rate: dropout rate
@@ -225,6 +223,18 @@ class MultiHeadDotProductAttention(Module):
       key, value, and returns output of shape `[bs, dim1, dim2, ..., dimN,,
       num_heads, value_channels]``
     decode: whether to prepare and use an autoregressive cache.
+    normalize_qk: should QK normalization be applied (arxiv.org/abs/2302.05442).
+    in_proj_kernel_axes: a tuple of axes over which to shard the kernel for
+      the attention in-projection.
+    in_proj_bias_axes: a tuple of axis names associated with the bias for
+      the attention in-projection.
+    out_proj_kernel_axes: a tuple of axis names associated with the kernel for
+      the attention out-projection.
+    out_proj_bias_axes: a tuple of axis names associated with the bias for
+      the attention out-projection.
+    decode_axes: a tuple of axis names associated with auroregressive cache.
+      Only used when decode=True.
+ 
   """
 
   num_heads: int
@@ -243,8 +253,17 @@ class MultiHeadDotProductAttention(Module):
   use_bias: bool = True
   attention_fn: Callable[..., Array] = dot_product_attention
   decode: bool = False
+  normalize_qk: bool = False
+  # Deprecated, will be removed.
   qkv_dot_general: DotGeneralT = lax.dot_general
   out_dot_general: DotGeneralT = lax.dot_general
+  qkv_dot_general_cls: Any = None
+  out_dot_general_cls: Any = None
+  in_proj_kernel_axes: Tuple[str, ...] = None
+  in_proj_bias_axes: Tuple[str, ...] = None
+  out_proj_kernel_axes: Tuple[str, ...] = None
+  out_proj_bias_axes: Tuple[str, ...] = None
+  decode_axes: Tuple[str, ...] = None
 
   @compact
   def __call__(
@@ -260,17 +279,13 @@ class MultiHeadDotProductAttention(Module):
     applies dot-product attention and project the results to an output vector.
 
     Args:
-      inputs_q: input queries of shape
-        `[batch_sizes..., length, features]`.
-      inputs_kv: key/values of shape
-        `[batch_sizes..., length, features]`.
-      mask: attention mask of shape
-        `[batch_sizes..., num_heads, query_length, key/value_length]`.
-        Attention weights are masked out if their corresponding mask value
-        is `False`.
-      deterministic: if false, the attention weight is masked randomly
-        using dropout, whereas if true, the attention weights
-        are deterministic.
+      inputs_q: input queries of shape `[batch_sizes..., length, features]`.
+      inputs_kv: key/values of shape `[batch_sizes..., length, features]`.
+      mask: attention mask of shape `[batch_sizes..., num_heads, query_length,
+        key/value_length]`. Attention weights are masked out if their
+        corresponding mask value is `False`.
+      deterministic: if false, the attention weight is masked randomly using
+        dropout, whereas if true, the attention weights are deterministic.
 
     Returns:
       output of shape `[batch_sizes..., length, features]`.
@@ -294,6 +309,9 @@ class MultiHeadDotProductAttention(Module):
         use_bias=self.use_bias,
         precision=self.precision,
         dot_general=self.qkv_dot_general,
+        dot_general_cls=self.qkv_dot_general_cls,
+        kernel_axes=self.in_proj_kernel_axes,
+        bias_axes=self.in_proj_bias_axes,
     )
     # project inputs_q to multi-headed q/k/v
     # dimensions are then [batch..., length, n_heads, n_features_per_head]
@@ -303,20 +321,26 @@ class MultiHeadDotProductAttention(Module):
         dense(name='value')(inputs_kv),
     )
 
+    if self.normalize_qk:
+      # Normalizing query and key projections stabilizes training with higher
+      # LR. See ViT-22B paper http://arxiv.org/abs/2302.05442 for analysis.
+      query = LayerNorm(name='query_ln', use_bias=False)(query)  # type: ignore[call-arg]
+      key = LayerNorm(name='key_ln', use_bias=False)(key)  # type: ignore[call-arg]
+
     # During fast autoregressive decoding, we feed one position at a time,
     # and cache the keys and values step by step.
     if self.decode:
       # detect if we're initializing by absence of existing cache data.
       is_initialized = self.has_variable('cache', 'cached_key')
-      cached_key = self.variable(
-          'cache', 'cached_key', jnp.zeros, key.shape, key.dtype
-      )
-      cached_value = self.variable(
-          'cache', 'cached_value', jnp.zeros, value.shape, value.dtype
-      )
-      cache_index = self.variable(
-          'cache', 'cache_index', lambda: jnp.array(0, dtype=jnp.int32)
-      )
+      cached_key = variable_with_axes('cache', 'cached_key',
+                                      jnp.zeros, key.shape, key.dtype,
+                                      axes=self.decode_axes)
+      cached_value = variable_with_axes('cache', 'cached_value',
+                                        jnp.zeros, value.shape, value.dtype,
+                                        axes=self.decode_axes)
+      cache_index = variable_with_axes('cache', 'cache_index',
+                                       lambda: jnp.array(0, dtype=jnp.int32),
+                                       axes=None)
       if is_initialized:
         (
             *batch_dims,
@@ -334,7 +358,11 @@ class MultiHeadDotProductAttention(Module):
           )
         # update key, value caches with our new 1d spatial slices
         cur_index = cache_index.value
-        indices = (0,) * len(batch_dims) + (cur_index, 0, 0)
+        indices: tuple[Union[int, jax.Array], ...] = (0,) * len(batch_dims) + (
+            cur_index,
+            0,
+            0,
+        )
         key = lax.dynamic_update_slice(cached_key.value, key, indices)
         value = lax.dynamic_update_slice(cached_value.value, value, indices)
         cached_key.value = key
@@ -388,7 +416,10 @@ class MultiHeadDotProductAttention(Module):
         param_dtype=self.param_dtype,
         precision=self.precision,
         dot_general=self.out_dot_general,
+        dot_general_cls=self.out_dot_general_cls,
         name='out',  # type: ignore[call-arg]
+        kernel_axes=self.out_proj_kernel_axes,
+        bias_axes=self.out_proj_bias_axes,
     )(x)
     return out
 
@@ -409,15 +440,12 @@ class SelfAttention(MultiHeadDotProductAttention):
     applies dot-product attention and project the results to an output vector.
 
     Args:
-      inputs_q: input queries of shape
-        `[batch_sizes..., length, features]`.
-      mask: attention mask of shape
-        `[batch_sizes..., num_heads, query_length, key/value_length]`.
-        Attention weights are masked out if their corresponding mask value
-        is `False`.
-      deterministic: if false, the attention weight is masked randomly
-        using dropout, whereas if true, the attention weights
-        are deterministic.
+      inputs_q: input queries of shape `[batch_sizes..., length, features]`.
+      mask: attention mask of shape `[batch_sizes..., num_heads, query_length,
+        key/value_length]`. Attention weights are masked out if their
+        corresponding mask value is `False`.
+      deterministic: if false, the attention weight is masked randomly using
+        dropout, whereas if true, the attention weights are deterministic.
 
     Returns:
       output of shape `[batch_sizes..., length, features]`.
@@ -447,8 +475,8 @@ def make_attention_mask(
     query_input: a batched, flat input of query_length size
     key_input: a batched, flat input of key_length size
     pairwise_fn: broadcasting elementwise comparison function
-    extra_batch_dims: number of extra batch dims to add singleton
-      axes for, none by default
+    extra_batch_dims: number of extra batch dims to add singleton axes for, none
+      by default
     dtype: mask return dtype
 
   Returns:
@@ -473,8 +501,8 @@ def make_causal_mask(
 
   Args:
     x: input array of shape `[batch..., len]`
-    extra_batch_dims: number of batch dims to add singleton axes for,
-      none by default
+    extra_batch_dims: number of batch dims to add singleton axes for, none by
+      default
     dtype: mask return dtype
 
   Returns:
