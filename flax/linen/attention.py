@@ -39,6 +39,7 @@ from flax.typing import (
   Initializer,
   PrecisionLike,
   DotGeneralT,
+  Tuple,
 )
 
 def dot_product_attention_weights(

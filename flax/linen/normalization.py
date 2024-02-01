@@ -32,6 +32,7 @@ from flax.typing import (
   Shape as Shape,
   Initializer,
   Axes,
+  Tuple,
 )
 
 field = dataclasses.field
