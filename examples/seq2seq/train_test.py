@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ def create_train_state(ctable):
       hidden_size=train.FLAGS.hidden_size,
       vocab_size=ctable.vocab_size,
   )
-  params = train.get_initial_params(model, jax.random.PRNGKey(0), ctable)
+  params = train.get_initial_params(model, jax.random.key(0), ctable)
   tx = optax.adam(train.FLAGS.learning_rate)
   state = train_state.TrainState.create(
       apply_fn=model.apply, params=params, tx=tx
@@ -89,7 +89,7 @@ class TrainTest(absltest.TestCase):
     batch = ctable.get_batch(128)
 
     state = create_train_state(ctable)
-    key = random.PRNGKey(0)
+    key = random.key(0)
     _, train_metrics = train.train_step(state, batch, key, ctable.eos_id)
 
     self.assertLessEqual(train_metrics['loss'], 5)
@@ -98,7 +98,7 @@ class TrainTest(absltest.TestCase):
   def test_decode_batch(self):
     ctable = create_ctable()
     batch = ctable.get_batch(5)
-    key = random.PRNGKey(0)
+    key = random.key(0)
     state = create_train_state(ctable)
     train.decode_batch(state, batch, key, ctable)
 

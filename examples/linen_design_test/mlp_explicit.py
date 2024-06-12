@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,14 +13,12 @@
 # limitations under the License.
 
 from pprint import pprint
-from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
+from typing import Optional
 from flax.deprecated import nn
-from flax.deprecated.nn import initializers
 from dense import Dense
 from flax.linen import Module
 import jax
-from jax import lax, numpy as jnp, random
-import numpy as np
+from jax import numpy as jnp
 
 
 # Add `in_features` to the built-in Dense layer that normally works
@@ -56,7 +54,7 @@ class MLP(Module):
 
 
 # Return an initialized instance of MLP by only calling `setup`.
-rngkey = jax.random.PRNGKey(10)
+rngkey = jax.random.key(10)
 init_variables = MLP().init({'params': rngkey}, jnp.ones((1, 3)))
 
 pprint(init_variables)

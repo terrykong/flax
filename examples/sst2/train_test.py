@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ class TrainTest(parameterized.TestCase):
     # Create model and a state that contains the parameters.
     config = default_config.get_config()
     config.vocab_size = 13
-    rng = jax.random.PRNGKey(config.seed)
+    rng = jax.random.key(config.seed)
     model = train.model_from_config(config)
     state = train.create_train_state(rng, config, model)
 

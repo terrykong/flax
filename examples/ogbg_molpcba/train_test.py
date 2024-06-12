@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -143,7 +143,7 @@ class OgbgMolpcbaTrainTest(parameterized.TestCase):
     print('Running on platform:', platform.upper())
 
     # Create PRNG keys.
-    self.rng = jax.random.PRNGKey(0)
+    self.rng = jax.random.key(0)
 
     # Create dummy datasets.
     self.datasets = get_dummy_datasets(dataset_length=20, batch_size=10)

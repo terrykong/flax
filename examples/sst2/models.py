@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -182,7 +182,7 @@ class SimpleLSTM(nn.Module):
   def initialize_carry(self, input_shape):
     # Use fixed random key since default state init fn is just zeros.
     return nn.OptimizedLSTMCell(self.hidden_size, parent=None).initialize_carry(
-        jax.random.PRNGKey(0), input_shape
+        jax.random.key(0), input_shape
     )
 
 

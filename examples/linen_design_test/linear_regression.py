@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,8 +13,7 @@
 # limitations under the License.
 
 import jax
-from jax import numpy as jnp, random, lax, jit
-from flax import linen as nn
+from jax import numpy as jnp, jit
 from dense import Dense
 
 
@@ -41,7 +40,7 @@ def init_params(rng):
 
 
 # Get initial parameters
-params = init_params(jax.random.PRNGKey(42))
+params = init_params(jax.random.key(42))
 print("initial params", params)
 
 # Run SGD.

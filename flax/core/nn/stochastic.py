@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,9 +14,8 @@
 
 """Stochastic modules."""
 
-from jax import lax
-from jax import random
 import jax.numpy as jnp
+from jax import lax, random
 
 
 def dropout(scope, inputs, rate, deterministic=False, rng=None):

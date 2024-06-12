@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,8 +28,8 @@ class ModelsTest(parameterized.TestCase):
   def setUp(self):
     super().setUp()
     self.rngs = {
-        'params': jax.random.PRNGKey(0),
-        'dropout': jax.random.PRNGKey(1),
+        'params': jax.random.key(0),
+        'dropout': jax.random.key(1),
     }
     n_node = jnp.arange(3, 11)
     n_edge = jnp.arange(4, 12)

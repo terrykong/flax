@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -43,9 +43,9 @@ class PrefetchIterator:
       buffer_size: how many items to prefetch (default: 1).
     """
     warnings.warn(
-        'PrefetchIterator is deprecated. Use the standard `tf.data`'
-        ' prefetch method instead',
-        DeprecationWarning,
+      'PrefetchIterator is deprecated. Use the standard `tf.data`'
+      ' prefetch method instead',
+      DeprecationWarning,
     )
 
     self._data_iter = data_iter

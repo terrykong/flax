@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,27 +37,35 @@ from flax import linen as nn
 from flax import struct
 from flax.core.frozen_dict import freeze
 from flax.core.frozen_dict import unfreeze
-from flax.core.lift import In as ScanIn  # pylint: disable=unused-import
-from flax.core.lift import Out as ScanOut  # pylint: disable=unused-import
+from flax.core.scope import (
+  CollectionFilter as CollectionFilter,
+  PRNGSequenceFilter as PRNGSequenceFilter,
+)
 from flax.linen.spmd import _axis_rules  # pylint: disable=unused-import
 from flax.linen.spmd import _AxisRules  # pylint: disable=unused-import
 from flax.linen.spmd import _is_logical_spec
 from flax.linen.spmd import _with_sharding_constraint  # pylint: disable=unused-import
-from flax.linen.spmd import Array  # pylint: disable=unused-import
-from flax.linen.spmd import ArrayPytree  # pylint: disable=unused-import
 from flax.linen.spmd import get_logical_axis_rules as get_axis_rules  # pylint: disable=unused-import
 from flax.linen.spmd import logical_axis_rules as axis_rules  # pylint: disable=unused-import
 from flax.linen.spmd import logical_to_mesh  # pylint: disable=unused-import
 from flax.linen.spmd import logical_to_mesh_axes  # pylint: disable=unused-import
-from flax.linen.spmd import LogicalPartitionSpec  # pylint: disable=unused-import
-from flax.linen.spmd import LogicalPartitionSpecPytree
-from flax.linen.spmd import LogicalRules  # pylint: disable=unused-import
-from flax.linen.spmd import PartitionSpecPytree  # pylint: disable=unused-import
 from flax.linen.spmd import RulesFallback
 from flax.linen.spmd import set_logical_axis_rules as set_axis_rules  # pylint: disable=unused-import
 from flax.linen.spmd import with_logical_constraint as with_sharding_constraint
 from flax.traverse_util import flatten_dict
 from flax.traverse_util import unflatten_dict
+from flax.typing import (
+  Array,
+  In as ScanIn,  # pylint: disable=unused-import
+  Out as ScanOut,  # pylint: disable=unused-import
+  InOutAxis,
+  InOutScanAxis,
+  LogicalRules,  # pylint: disable=unused-import
+  ArrayPytree,  # pylint: disable=unused-import
+  LogicalPartitionSpec,  # pylint: disable=unused-import
+  LogicalPartitionSpecPytree,
+  PartitionSpecPytree,  # pylint: disable=unused-import
+)
 import jax
 
 
@@ -119,6 +127,7 @@ def param_with_axes(
     *init_args,
     axes: Optional[Tuple[str, ...]] = None,
     module: Optional['nn.Module'] = None,
+    **init_kwargs,
 ):
   """Declares and returns a parameter with logical axes in the current Module.
 
@@ -129,10 +138,11 @@ def param_with_axes(
     init_fn: The function that will be called to compute the initial value
       of this variable. This function will only be called the first time
       this parameter is used in this module.
-    *init_args: The arguments to pass to init_fn.
+    *init_args: The positional arguments to pass to init_fn.
     axes: A tuple of axis names, must match the rank of the param array.
     module: Use an explicit module instead of deriving the most recent from
       dynamic module context.
+    **init_kwargs: The key-word arguments to pass to init_fn.
 
   Returns:
     The value of the initialized parameter.
@@ -146,7 +156,7 @@ def param_with_axes(
     module = nn.module._context.module_stack[-1]  # pylint: disable=protected-access
     assert module is not None
   # define/fetch parameter on that module
-  module_param = module.param(name, init_fn, *init_args)
+  module_param = module.param(name, init_fn, *init_args, **init_kwargs)
   if axes is not None:
     # apply logical axis constraint immediately
     module_param = with_sharding_constraint(
@@ -219,13 +229,14 @@ def _core_variable_with_axes(
     *init_args,
     axes: Optional[Tuple[str, ...]] = None,
     fallback: RulesFallback = RulesFallback.AXIS_IS_UNSHARDED,
+    **init_kwargs,
 ):
   """Variant of flax core variable scope call with sharding constraints."""
   scope.reserve(name)
   if not scope.has_variable(col, name):
     if not scope.is_mutable_collection(col):
       raise flax.errors.ScopeVariableNotFoundError(name, col, scope.path_text)
-    init_value = init_fn(*init_args)
+    init_value = init_fn(*init_args, **init_kwargs)
     if axes is not None:
       init_value = with_sharding_constraint(init_value, axes, fallback=fallback)
     scope.put_variable(col, name, init_value)
@@ -240,6 +251,7 @@ def variable_with_axes(
     axes: Optional[Tuple[str, ...]] = None,
     module: Optional['nn.Module'] = None,
     fallback: RulesFallback = RulesFallback.AXIS_IS_UNSHARDED,
+    **init_kwargs,
 ):
   """Declares and returns a variable with logical axes in the current Module.
 
@@ -251,11 +263,12 @@ def variable_with_axes(
     init_fn: The function that will be called to compute the initial value
       of this variable. This function will only be called the first time
       this parameter is used in this module.
-    *init_args: The arguments to pass to init_fn.
+    *init_args: The positional arguments to pass to init_fn.
     axes: A tuple of axis names, must match the rank of the variable array.
     module: Use an explicit module instead of deriving the most recent from
       dynamic module context.
     fallback: How sharding should behave if there is no rule covering some axis.
+    **init_kwargs: The key-word arguments to pass to init_fn.
 
   Returns:
     A flax `PartitionedVariable` object referencing the initialized variable
@@ -277,6 +290,7 @@ def variable_with_axes(
       *init_args,
       axes=axes,
       fallback=fallback,
+      **init_kwargs,
   )
   if axes is not None:
     # record logical axis constraint for global axis metadata
@@ -403,11 +417,11 @@ def _add_axis_to_metadata(fn, axis_pos, axis_name, axis_col='params_axes'):
 def scan_with_axes(
     target: 'flax.linen.transforms.Target',
     variable_axes: Mapping[
-        flax.core.lift.CollectionFilter, flax.core.lift.InOutScanAxis
+        CollectionFilter, InOutScanAxis
     ] = {},
-    variable_broadcast: flax.core.lift.CollectionFilter = False,
-    variable_carry: flax.core.lift.CollectionFilter = False,
-    split_rngs: Mapping[flax.core.lift.PRNGSequenceFilter, bool] = {},
+    variable_broadcast: CollectionFilter = False,
+    variable_carry: CollectionFilter = False,
+    split_rngs: Mapping[PRNGSequenceFilter, bool] = {},
     in_axes=0,
     out_axes=0,
     length: Optional[int] = None,
@@ -459,9 +473,9 @@ def scan_with_axes(
 def vmap_with_axes(
     target: 'flax.linen.transforms.Target',
     variable_axes: Mapping[
-        flax.core.lift.CollectionFilter, flax.core.lift.InOutAxis
+        CollectionFilter, InOutAxis
     ],
-    split_rngs: Mapping[flax.core.lift.PRNGSequenceFilter, bool] = {},
+    split_rngs: Mapping[PRNGSequenceFilter, bool] = {},
     in_axes=0,
     out_axes=0,
     axis_size: Optional[int] = None,

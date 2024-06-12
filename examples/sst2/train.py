@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -264,7 +264,7 @@ def train_and_evaluate(
   eval_step_fn = jax.jit(eval_step)
 
   # Create model and a state that contains the parameters.
-  rng = jax.random.PRNGKey(config.seed)
+  rng = jax.random.key(config.seed)
   model = model_from_config(config)
   state = create_train_state(rng, config, model)
 

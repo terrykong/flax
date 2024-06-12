@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,18 +23,19 @@ to keep track of how variables should be partitioned with ``jax.pjit``.
 
 import abc
 import functools
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, Optional, TypeVar
 
-from flax import errors
-from flax import struct
+from flax import errors, struct
+from flax.typing import LogicalNames
 import jax
-from jax.experimental import maps
+from jax.interpreters import pxla
+
+A = TypeVar('A')
+B = TypeVar('B')
+TAxisMetadata = TypeVar('TAxisMetadata', bound='AxisMetadata[Any]')
 
 
-TAxisMetadata = Any  # TypeVar('TAxisMetadata', bound='AxisMetadata')
-
-
-class AxisMetadata(metaclass=abc.ABCMeta):
+class AxisMetadata(Generic[A], metaclass=abc.ABCMeta):
   """Abstract base class for boxed Metadata.
 
   ``AxisMetadata`` enables arbitrary, per axis metadata for variables.
@@ -53,7 +54,7 @@ class AxisMetadata(metaclass=abc.ABCMeta):
   """
 
   @abc.abstractmethod
-  def unbox(self) -> Any:
+  def unbox(self) -> A:
     """Returns the content of the AxisMetadata box.
 
     Note that unlike ``meta.unbox`` the unbox call should recursively unbox
@@ -70,11 +71,12 @@ class AxisMetadata(metaclass=abc.ABCMeta):
     pass
 
   @abc.abstractmethod
-  def replace_boxed(self, val: Any) -> TAxisMetadata:
+  def replace_boxed(self, val: B) -> 'AxisMetadata[B]':
     """Replaces the boxed value with the provided value.
 
     Args:
       val: The new value to be boxed by this AxisMetadata wrapper
+
     Returns:
       A new instance of the same type as self with `val` as the new ``unbox``
       content
@@ -96,6 +98,7 @@ class AxisMetadata(metaclass=abc.ABCMeta):
         that introduces the new axis (e.g.: ``nn.scan`` or ``nn.vmap``). The
         user passes this dictionary as the `metadata_param` argument to the
         transformation.
+
     Returns:
       A new instance of the same type as self and with the same ``unbox``
       content with updated axis metadata.
@@ -114,9 +117,10 @@ class AxisMetadata(metaclass=abc.ABCMeta):
     Args:
       index: The position of the axis that is to be removed
       params: An arbitrary dictionary of parameters passed by the transformation
-        that introduced the axis (e.g.: ``nn.scan`` or ``nn.vmap``). The
-        user passes this dictionary as the `metadata_param` argument to the
+        that introduced the axis (e.g.: ``nn.scan`` or ``nn.vmap``). The user
+        passes this dictionary as the `metadata_param` argument to the
         transformation.
+
     Returns:
       A new instance of the same type as self and with the same ``unbox``
       content with updated axis metadata.
@@ -129,7 +133,7 @@ def is_axis_metadata(val: Any) -> bool:
   return isinstance(val, AxisMetadata)
 
 
-def map_axis_meta(fn: Callable[[AxisMetadata], Any], tree: Any) -> Any:
+def map_axis_meta(fn: Callable[[AxisMetadata[Any]], Any], tree: Any) -> Any:
   """Maps over all PyTree nodes that are AxisMetadata instances."""
 
   def wrapper(x):
@@ -138,7 +142,7 @@ def map_axis_meta(fn: Callable[[AxisMetadata], Any], tree: Any) -> Any:
     else:
       return x
 
-  return jax.tree_map(wrapper, tree, is_leaf=is_axis_metadata)
+  return jax.tree_util.tree_map(wrapper, tree, is_leaf=is_axis_metadata)
 
 
 def add_axis(tree: Any, index: int, params: Dict[Any, Any]) -> Any:
@@ -165,20 +169,21 @@ def replace_boxed(tree: Any, updates: Any) -> Any:
     else:
       return v
 
-  return jax.tree_map(inner_update, tree, updates, is_leaf=is_axis_metadata)
+  return jax.tree_util.tree_map(
+      inner_update, tree, updates, is_leaf=is_axis_metadata
+  )
 
 
 PARTITION_NAME = 'partition_name'
-LogicalNames = Tuple[Union[str, None], ...]
 
 
 def _global_mesh_defined() -> bool:
-  """Checks if global xmap/pjit mesh resource environment is defined."""
-  maps_env = maps.thread_resources.env
-  return maps_env.physical_mesh.devices.shape != ()  # pylint: disable=g-explicit-bool-comparison
+  """Checks if global mesh resource environment is defined."""
+  env = pxla.thread_resources.env
+  return env.physical_mesh.devices.shape != ()  # pylint: disable=g-explicit-bool-comparison
 
 
-class Partitioned(struct.PyTreeNode, AxisMetadata):
+class Partitioned(struct.PyTreeNode, AxisMetadata[A]):
   """Wrapper for partitioning metadata.
 
   ``Partitioned`` is used to extend variables with partitioning information
@@ -204,13 +209,13 @@ class Partitioned(struct.PyTreeNode, AxisMetadata):
     mlp = MLP(4096)
     x = jnp.ones((8 * 1024, 1024))
     # use eval_shape to get the Partitioned instances for the variables.
-    # this way we can determinte the PartitionSpecs for the init variables
+    # this way we can determine the PartitionSpecs for the init variables
     # before we call the init fn.
     var_spec = nn.get_partition_spec(
-        jax.eval_shape(mlp.init, random.PRNGKey(0), x))
+        jax.eval_shape(mlp.init, random.key(0), x))
     init_fn = mesh(pjit(mlp.init,
                         (None, PartitionSpec("data", "model")), var_spec))
-    variables = init_fn(random.PRNGKey(0), x)
+    variables = init_fn(random.key(0), x)
     apply_fn = mesh(pjit(
         mlp.apply,
         (var_spec, PartitionSpec("data", "model")),
@@ -232,7 +237,6 @@ class Partitioned(struct.PyTreeNode, AxisMetadata):
           body, variable_axes={"params": 0}, split_rngs={"params": 0}, length=8,
           metadata_params={nn.meta.PARTITION_NAME: "layers"})(self, x)
       return c
-
   """
 
   value: Any
@@ -241,7 +245,7 @@ class Partitioned(struct.PyTreeNode, AxisMetadata):
       default=None, pytree_node=False
   )
 
-  def unbox(self, apply_constraint=True) -> Any:
+  def unbox(self, apply_constraint=True) -> A:
     """Returns the wrapped value with the partitioning applied as a sharding constraint."""
     if apply_constraint and (_global_mesh_defined() or self.mesh is not None):
       axis_resource = self.get_partition_spec()
@@ -252,15 +256,15 @@ class Partitioned(struct.PyTreeNode, AxisMetadata):
     else:
       return self.value
 
-  def replace_boxed(self, val: Any) -> TAxisMetadata:
-    return self.replace(value=val)
+  def replace_boxed(self, val: B) -> 'Partitioned[B]':
+    return self.replace(value=val)  # type: ignore
 
   def _get_partition_name(self, params: Dict[Any, Any]) -> str:
     if PARTITION_NAME not in params:
       raise errors.PartitioningUnspecifiedError(self)
     return params[PARTITION_NAME]
 
-  def add_axis(self, index: int, params: Dict[Any, Any]) -> TAxisMetadata:
+  def add_axis(self, index: int, params: Dict[Any, Any]) -> 'Partitioned[A]':
     axis_name = self._get_partition_name(params)
     names = list(self.names)
     while len(names) < index:
@@ -268,7 +272,7 @@ class Partitioned(struct.PyTreeNode, AxisMetadata):
     names.insert(index, axis_name)  # type: ignore
     return self.replace(names=tuple(names))
 
-  def remove_axis(self, index: int, params: Dict[Any, Any]) -> TAxisMetadata:
+  def remove_axis(self, index: int, params: Dict[Any, Any]) -> 'Partitioned[A]':
     axis_name = self._get_partition_name(params)
     names = list(self.names)
     assert names.pop(index) == axis_name
@@ -287,20 +291,22 @@ def with_partitioning(
     fn: Callable[..., Any],
     names: LogicalNames,
     mesh: Optional[jax.sharding.Mesh] = None,
-) -> Callable[..., Partitioned]:
+) -> Callable[..., Partitioned[Any]]:
   """Wraps a function's return value with Partitioned.
 
   Example::
 
-    kernel_init = with_partitioning(
-        nn.initializers.lecun_normal, (None, "data"))
-    partitioned_dense = nn.Dense(features, kernel_init=kernel_init)
+    >>> import flax.linen as nn
+    >>> kernel_init = nn.with_partitioning(
+    ...     nn.initializers.lecun_normal(), (None, "data"))
+    >>> partitioned_dense = nn.Dense(features=3, kernel_init=kernel_init)
 
   Args:
     fn: The function to be wrapped. Typically this is an initializer.
     names: The logical axis passed to ``Partitioned``.
     mesh: The mesh to use for the partitioning. If None, the global mesh
       resource is used if available.
+
   Returns:
     A function wrapping ``fn`` that will return an instance of ``Partitioned``.
   """
@@ -324,10 +330,14 @@ def get_partition_spec(tree: Any) -> Any:
     else:
       return None
 
-  return jax.tree_map(f, tree, is_leaf=lambda x: isinstance(x, Partitioned))
+  return jax.tree_util.tree_map(
+      f, tree, is_leaf=lambda x: isinstance(x, Partitioned)
+  )
 
 
 def get_sharding(tree: Any, mesh: jax.sharding.Mesh) -> Any:
   """Extracts a jax.sharding tree from a PyTree containing ``Partitioned`` values and a mesh."""
   pspec_tree = get_partition_spec(tree)
-  return jax.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), pspec_tree)
+  return jax.tree_util.tree_map(
+      lambda x: jax.sharding.NamedSharding(mesh, x), pspec_tree
+  )

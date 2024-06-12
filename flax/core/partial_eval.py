@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
-
 import functools
+from typing import Any
 
 import jax
 from jax import core
-from jax import linear_util as lu
+from jax.extend import linear_util as lu
 from jax.interpreters import partial_eval as pe
 
 from flax import errors

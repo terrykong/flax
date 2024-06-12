@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,15 +14,13 @@
 
 import functools
 from pprint import pprint
-from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple, Type, Union
-from flax.core import Scope
-from flax.core.frozen_dict import freeze, unfreeze
+from typing import Any, Callable, Optional, Sequence
+from flax.core.frozen_dict import unfreeze
 from flax.linen import initializers
 from flax.linen import Module, compact, vmap
 from flax.linen.linear import PrecisionLike
 import jax
 from jax import lax, numpy as jnp, random
-import numpy as np
 
 
 class Dense(Module):
@@ -202,7 +200,7 @@ class MultiHeadDotProductAttention(Module):
 
 if __name__ == '__main__':
   inputs = jnp.ones((8, 97, 256))
-  rngs = {'params': random.PRNGKey(0), 'dropout': random.PRNGKey(1)}
+  rngs = {'params': random.key(0), 'dropout': random.key(1)}
   model = MultiHeadDotProductAttention(
       broadcast_dropout=False,
       qkv_features=256,

@@ -105,7 +105,7 @@ def train_step(opt_state, variables, inputs, labels, apply_fn, tx_update_fn):
       params)
   updates, new_opt_state = tx_update_fn(grads, opt_state, params)
   new_params = optax.apply_updates(params, updates)
-  new_variables = {**variables, **new_model_state, 'params': params}
+  new_variables = {**variables, **new_model_state, 'params': new_params}
   return new_opt_state, new_variables, loss
 
 
@@ -496,7 +496,7 @@ def get_learning_rate(step):
 
 
 model = Model()
-rng = jax.random.PRNGKey(0)
+rng = jax.random.key(0)
 ds = tfds.load('mnist')['train'].take(160).map(pp).batch(16)
 batch = next(iter(ds))
 variables = model.init(rng, jnp.array(batch['image'][:1]))

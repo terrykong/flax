@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,12 +18,12 @@ import contextlib
 import functools
 import os
 
-# pylint: disable=g-import-not-at-top
-from flax import io
 import numpy as np
-
 import tensorflow as tf  # pytype: disable=import-error
 from tensorboard.plugins.hparams import api as hparams_api
+
+# pylint: disable=g-import-not-at-top
+from flax import io
 
 
 def _flatten_dict(input_dict, parent_key='', sep='.'):
@@ -43,14 +43,14 @@ def _flatten_dict(input_dict, parent_key='', sep='.'):
 
     # Valid types according to https://github.com/tensorflow/tensorboard/blob/1204566da5437af55109f7a4af18f9f8b7c4f864/tensorboard/plugins/hparams/summary_v2.py
     valid_types = (
-        bool,
-        int,
-        float,
-        str,
-        np.bool_,
-        np.integer,
-        np.floating,
-        np.character,
+      bool,
+      int,
+      float,
+      str,
+      np.bool_,
+      np.integer,
+      np.floating,
+      np.character,
     )
 
     if isinstance(v, dict):
@@ -75,7 +75,7 @@ def _as_default(summary_writer: tf.summary.SummaryWriter, auto_flush: bool):
     old_flush = summary_writer.flush
     new_flush = old_flush if auto_flush else lambda: None
     summary_writer.flush = new_flush
-    context_manager.__exit__()
+    context_manager.__exit__(None, None, None)
     summary_writer.flush = old_flush
 
 
@@ -175,12 +175,12 @@ class SummaryWriter:
     audio = tf.convert_to_tensor(audiodata, dtype=tf.float32)
     with self._as_default(self._event_writer):
       tf.summary.audio(
-          name=tag,
-          data=audio,
-          sample_rate=sample_rate,
-          step=step,
-          max_outputs=max_outputs,
-          encoding='wav',
+        name=tag,
+        data=audio,
+        sample_rate=sample_rate,
+        step=step,
+        max_outputs=max_outputs,
+        encoding='wav',
       )
 
   def histogram(self, tag, values, step, bins=None):

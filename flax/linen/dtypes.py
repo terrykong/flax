@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,18 +27,13 @@
 # limitations under the License.
 """APIs for handling dtypes in Linen Modules."""
 
-from typing import Any, Optional, List
-
+from typing import Any, List, Optional
+from flax.typing import Dtype
 from jax import numpy as jnp
-import jax
-
-
-Dtype = Any
-Array = Any
 
 
 def canonicalize_dtype(
-    *args, dtype: Optional[Dtype] = None, inexact: bool = True
+  *args, dtype: Optional[Dtype] = None, inexact: bool = True
 ) -> Dtype:
   """Canonicalize an optional dtype to the definitive dtype.
 
@@ -69,7 +64,7 @@ def canonicalize_dtype(
   return dtype
 
 
-def promote_dtype(*args, dtype=None, inexact=True) -> List[Array]:
+def promote_dtype(*args, dtype=None, inexact=True) -> List[Any]:
   """ "Promotes input arguments to a specified or inferred dtype.
 
   All args are cast to the same dtype. See ``canonicalize_dtype`` for how

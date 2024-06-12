@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,12 +13,10 @@
 # limitations under the License.
 
 import jax
-from jax import numpy as jnp, random, lax
+from jax import numpy as jnp
 from flax import linen as nn
-from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
+from typing import Iterable
 from flax.linen import Module, compact
-import numpy as np
-from pprint import pprint
 from dense import Dense
 
 
@@ -39,7 +37,7 @@ class MLP(Module):
 # initializing all variables.
 #
 # Variable shapes depend on the input shape passed in.
-rngkey = jax.random.PRNGKey(10)
+rngkey = jax.random.key(10)
 model = MLP((2, 1))
 x = jnp.ones((1, 3))
 mlp_variables = model.init(rngkey, x)

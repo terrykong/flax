@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -322,7 +322,7 @@ def get_datasets(
     config: ml_collections.ConfigDict,
     *,
     n_devices: int,
-    vocab_path: Optional[str] = None
+    vocab_path: Optional[str] = None,
 ):
   """Load and return dataset of batched examples for use during training."""
   if vocab_path is None:

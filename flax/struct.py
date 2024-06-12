@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,13 +15,14 @@
 """Utilities for defining custom classes that can be used with jax transformations."""
 
 import dataclasses
-from typing import TypeVar, Callable, Tuple, Union, Any
-
-from . import serialization
+from typing import TypeVar
 
 import jax
-from typing_extensions import dataclass_transform  # pytype: disable=not-supported-yet
+from typing_extensions import (
+  dataclass_transform,  # pytype: disable=not-supported-yet
+)
 
+from . import serialization
 
 _T = TypeVar('_T')
 
@@ -31,62 +32,69 @@ def field(pytree_node=True, **kwargs):
 
 
 @dataclass_transform(field_specifiers=(field,))  # type: ignore[literal-required]
-def dataclass(clz: _T) -> _T:
+def dataclass(clz: _T, **kwargs) -> _T:
   """Create a class which can be passed to functional transformations.
 
-  NOTE: Inherit from ``PyTreeNode`` instead to avoid type checking issues when
-  using PyType.
+  .. note::
+    Inherit from ``PyTreeNode`` instead to avoid type checking issues when
+    using PyType.
 
-  Jax transformations such as `jax.jit` and `jax.grad` require objects that are
-  immutable and can be mapped over using the `jax.tree_util` methods.
-  The `dataclass` decorator makes it easy to define custom classes that can be
+  Jax transformations such as ``jax.jit`` and ``jax.grad`` require objects that are
+  immutable and can be mapped over using the ``jax.tree_util`` methods.
+  The ``dataclass`` decorator makes it easy to define custom classes that can be
   passed safely to Jax. For example::
 
-    from flax import struct
+    >>> from flax import struct
+    >>> import jax
+    >>> from typing import Any, Callable
 
-    @struct.dataclass
-    class Model:
-      params: Any
-      # use pytree_node=False to indicate an attribute should not be touched
-      # by Jax transformations.
-      apply_fn: FunctionType = struct.field(pytree_node=False)
+    >>> @struct.dataclass
+    ... class Model:
+    ...   params: Any
+    ...   # use pytree_node=False to indicate an attribute should not be touched
+    ...   # by Jax transformations.
+    ...   apply_fn: Callable = struct.field(pytree_node=False)
 
-      def __apply__(self, *args):
-        return self.apply_fn(*args)
+    ...   def __apply__(self, *args):
+    ...     return self.apply_fn(*args)
 
-    model = Model(params, apply_fn)
+    >>> params = {}
+    >>> params_b = {}
+    >>> apply_fn = lambda v, x: x
+    >>> model = Model(params, apply_fn)
 
-    model.params = params_b  # Model is immutable. This will raise an error.
-    model_b = model.replace(params=params_b)  # Use the replace method instead.
+    >>> # model.params = params_b  # Model is immutable. This will raise an error.
+    >>> model_b = model.replace(params=params_b)  # Use the replace method instead.
 
-    # This class can now be used safely in Jax to compute gradients w.r.t. the
-    # parameters.
-    model = Model(params, apply_fn)
-    model_grad = jax.grad(some_loss_fn)(model)
+    >>> # This class can now be used safely in Jax to compute gradients w.r.t. the
+    >>> # parameters.
+    >>> model = Model(params, apply_fn)
+    >>> loss_fn = lambda model: 3.
+    >>> model_grad = jax.grad(loss_fn)(model)
 
   Note that dataclasses have an auto-generated ``__init__`` where
   the arguments of the constructor and the attributes of the created
   instance match 1:1. This correspondence is what makes these objects
   valid containers that work with JAX transformations and
-  more generally the `jax.tree_util` library.
+  more generally the ``jax.tree_util`` library.
 
   Sometimes a "smart constructor" is desired, for example because
   some of the attributes can be (optionally) derived from others.
   The way to do this with Flax dataclasses is to make a static or
   class method that provides the smart constructor.
-  This way the simple constructor used by `jax.tree_util` is
+  This way the simple constructor used by ``jax.tree_util`` is
   preserved. Consider the following example::
 
-    @struct.dataclass
-    class DirectionAndScaleKernel:
-      direction: Array
-      scale: Array
+    >>> @struct.dataclass
+    ... class DirectionAndScaleKernel:
+    ...   direction: jax.Array
+    ...   scale: jax.Array
 
-      @classmethod
-      def create(cls, kernel):
-        scale = jax.numpy.linalg.norm(kernel, axis=0, keepdims=True)
-        direction = direction / scale
-        return cls(direction, scale)
+    ...   @classmethod
+    ...   def create(cls, kernel):
+    ...     scale = jax.numpy.linalg.norm(kernel, axis=0, keepdims=True)
+    ...     direction = direction / scale
+    ...     return cls(direction, scale)
 
   Args:
     clz: the class that will be transformed by the decorator.
@@ -97,7 +105,9 @@ def dataclass(clz: _T) -> _T:
   if '_flax_dataclass' in clz.__dict__:
     return clz
 
-  data_clz = dataclasses.dataclass(frozen=True)(clz)  # type: ignore
+  if 'frozen' not in kwargs.keys():
+    kwargs['frozen'] = True
+  data_clz = dataclasses.dataclass(**kwargs)(clz)  # type: ignore
   meta_fields = []
   data_fields = []
   for field_info in dataclasses.fields(data_clz):
@@ -113,33 +123,46 @@ def dataclass(clz: _T) -> _T:
 
   data_clz.replace = replace
 
-  def iterate_clz(x):
-    meta = tuple(getattr(x, name) for name in meta_fields)
-    data = tuple(getattr(x, name) for name in data_fields)
-    return data, meta
+  # Remove this guard once minimux JAX version is >0.4.26.
+  try:
+    if hasattr(jax.tree_util, 'register_dataclass'):
+      jax.tree_util.register_dataclass(
+          data_clz, data_fields, meta_fields
+      )
+    else:
+      raise NotImplementedError
+  except NotImplementedError:
 
-  def iterate_clz_with_keys(x):
-    meta = tuple(getattr(x, name) for name in meta_fields)
-    data = tuple(
-        (jax.tree_util.GetAttrKey(name), getattr(x, name))
-        for name in data_fields
+    def iterate_clz(x):
+      meta = tuple(getattr(x, name) for name in meta_fields)
+      data = tuple(getattr(x, name) for name in data_fields)
+      return data, meta
+
+    def iterate_clz_with_keys(x):
+      meta = tuple(getattr(x, name) for name in meta_fields)
+      data = tuple(
+          (jax.tree_util.GetAttrKey(name), getattr(x, name))
+          for name in data_fields
+      )
+      return data, meta
+
+    def clz_from_iterable(meta, data):
+      meta_args = tuple(zip(meta_fields, meta))
+      data_args = tuple(zip(data_fields, data))
+      kwargs = dict(meta_args + data_args)
+      return data_clz(**kwargs)
+
+    jax.tree_util.register_pytree_with_keys(
+        data_clz,
+        iterate_clz_with_keys,
+        clz_from_iterable,
+        iterate_clz,
     )
-    return data, meta
-
-  def clz_from_iterable(meta, data):
-    meta_args = tuple(zip(meta_fields, meta))
-    data_args = tuple(zip(data_fields, data))
-    kwargs = dict(meta_args + data_args)
-    return data_clz(**kwargs)
-
-  jax.tree_util.register_pytree_with_keys(
-      data_clz, iterate_clz_with_keys, clz_from_iterable
-  )
 
   def to_state_dict(x):
     state_dict = {
-        name: serialization.to_state_dict(getattr(x, name))
-        for name in data_fields
+      name: serialization.to_state_dict(getattr(x, name))
+      for name in data_fields
     }
     return state_dict
 
@@ -150,26 +173,26 @@ def dataclass(clz: _T) -> _T:
     for name in data_fields:
       if name not in state:
         raise ValueError(
-            f'Missing field {name} in state dict while restoring'
-            f' an instance of {clz.__name__},'
-            f' at path {serialization.current_path()}'
+          f'Missing field {name} in state dict while restoring'
+          f' an instance of {clz.__name__},'
+          f' at path {serialization.current_path()}'
         )
       value = getattr(x, name)
       value_state = state.pop(name)
       updates[name] = serialization.from_state_dict(
-          value, value_state, name=name
+        value, value_state, name=name
       )
     if state:
       names = ','.join(state.keys())
       raise ValueError(
-          f'Unknown field(s) "{names}" in state dict while'
-          f' restoring an instance of {clz.__name__}'
-          f' at path {serialization.current_path()}'
+        f'Unknown field(s) "{names}" in state dict while'
+        f' restoring an instance of {clz.__name__}'
+        f' at path {serialization.current_path()}'
       )
     return x.replace(**updates)
 
   serialization.register_serialization_state(
-      data_clz, to_state_dict, from_state_dict
+    data_clz, to_state_dict, from_state_dict
   )
 
   # add a _flax_dataclass flag to distinguish from regular dataclasses
@@ -190,31 +213,36 @@ class PyTreeNode:
 
   Example::
 
-    from flax import struct
+    >>> from flax import struct
+    >>> import jax
+    >>> from typing import Any, Callable
 
-    class Model(struct.PyTreeNode):
-      params: Any
-      # use pytree_node=False to indicate an attribute should not be touched
-      # by Jax transformations.
-      apply_fn: FunctionType = struct.field(pytree_node=False)
+    >>> class Model(struct.PyTreeNode):
+    ...   params: Any
+    ...   # use pytree_node=False to indicate an attribute should not be touched
+    ...   # by Jax transformations.
+    ...   apply_fn: Callable = struct.field(pytree_node=False)
 
-      def __apply__(self, *args):
-        return self.apply_fn(*args)
+    ...   def __apply__(self, *args):
+    ...     return self.apply_fn(*args)
 
-    model = Model(params, apply_fn)
+    >>> params = {}
+    >>> params_b = {}
+    >>> apply_fn = lambda v, x: x
+    >>> model = Model(params, apply_fn)
 
-    model.params = params_b  # Model is immutable. This will raise an error.
-    model_b = model.replace(params=params_b)  # Use the replace method instead.
+    >>> # model.params = params_b  # Model is immutable. This will raise an error.
+    >>> model_b = model.replace(params=params_b)  # Use the replace method instead.
 
-    # This class can now be used safely in Jax to compute gradients w.r.t. the
-    # parameters.
-    model = Model(params, apply_fn)
-    model_grad = jax.grad(some_loss_fn)(model)
-
+    >>> # This class can now be used safely in Jax to compute gradients w.r.t. the
+    >>> # parameters.
+    >>> model = Model(params, apply_fn)
+    >>> loss_fn = lambda model: 3.
+    >>> model_grad = jax.grad(loss_fn)(model)
   """
 
-  def __init_subclass__(cls):
-    dataclass(cls)  # pytype: disable=wrong-arg-types
+  def __init_subclass__(cls, **kwargs):
+    dataclass(cls, **kwargs)  # pytype: disable=wrong-arg-types
 
   def __init__(self, *args, **kwargs):
     # stub for pytype

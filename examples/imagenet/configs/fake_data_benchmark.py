@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,10 +27,8 @@ def get_config():
   config.half_precision = True
   config.num_epochs = 5
 
-  # Previously the input pipeline computed:
-  # `steps_per_epoch` as input_pipeline.TRAIN_IMAGES // batch_size
-  config.num_train_steps = 1024 // config.batch_size
-  # and `steps_per_eval` as input_pipeline.EVAL_IMAGES // batch_size
-  config.steps_per_eval = 512 // config.batch_size
+  # Run for a single step:
+  config.num_train_steps = 1
+  config.steps_per_eval = 1
 
   return config

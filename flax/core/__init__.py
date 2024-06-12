@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ from .meta import (
     unbox as unbox,
 )
 from .scope import (
-    Array as Array,
     DenyList as DenyList,
     Scope as Scope,
     apply as apply,
@@ -50,4 +49,8 @@ from .tracers import (
     check_trace_level as check_trace_level,
     current_trace as current_trace,
     trace_level as trace_level,
+)
+
+from flax.typing import (
+    Array as Array,
 )

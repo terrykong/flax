@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Flax implementation of ResNet V1."""
+"""Flax implementation of ResNet V1.5."""
 
 # See issue #620.
 # pytype: disable=wrong-arg-count
@@ -87,7 +87,7 @@ class BottleneckResNetBlock(nn.Module):
 
 
 class ResNet(nn.Module):
-  """ResNetV1."""
+  """ResNetV1.5."""
 
   stage_sizes: Sequence[int]
   block_cls: ModuleDef

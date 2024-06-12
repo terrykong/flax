@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
+from typing import Iterable, Tuple
 
 import jax
-from jax import numpy as jnp, random, lax
-import numpy as np
+from jax import numpy as jnp, random
 
 from flax import linen as nn
 from flax.linen import Module, Dense, compact
@@ -69,7 +68,7 @@ ae = AutoEncoder(
 
 # `ae.initialized` returns a materialized copy of `ae` by
 # running through an input to create submodules defined lazily.
-params = ae.init({"params": random.PRNGKey(42)}, jnp.ones((1, 28, 28, 1)))
+params = ae.init({"params": random.key(42)}, jnp.ones((1, 28, 28, 1)))
 
 
 # Now you can use `ae` as a normal object, calling any methods defined on AutoEncoder

@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -276,7 +276,7 @@ def initialize_cache(inputs, max_decode_len, config):
   """Initialize a cache for a given input shape and max decode length."""
   target_shape = (inputs.shape[0], max_decode_len) + inputs.shape[2:]
   initial_variables = models.Transformer(config).init(
-      jax.random.PRNGKey(0),
+      jax.random.key(0),
       jnp.ones(inputs.shape, config.dtype),
       jnp.ones(target_shape, config.dtype),
   )
@@ -523,7 +523,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
   predict_config = train_config.replace(deterministic=True, decode=True)
 
   start_step = 0
-  rng = jax.random.PRNGKey(config.seed)
+  rng = jax.random.key(config.seed)
   rng, init_rng = jax.random.split(rng)
   input_shape = (config.per_device_batch_size, config.max_target_length)
   target_shape = (config.per_device_batch_size, config.max_target_length)

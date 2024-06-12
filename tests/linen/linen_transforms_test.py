@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,20 +15,24 @@
 """Transforms tests."""
 
 from functools import partial
-from typing import Any, Tuple, Iterable, Callable, Sequence
 import operator
+from typing import Any, Callable, Sequence
 import unittest
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
+from flax import errors
+from flax import linen as nn
+from flax import serialization
+from flax.core import copy, freeze
+from flax.linen.transforms import _HashableProxy
 import jax
 from jax import random
 import jax.numpy as jnp
 import numpy as np
-from flax import config
-from flax import errors
-from flax import linen as nn
-from flax.core import freeze, copy
-from flax.configurations import temp_flip_flag
+
+# TODO(jakevdp): use jax.debug_key_reuse directly once min jax version is 0.4.26
+jax_debug_key_reuse = (jax.debug_key_reuse if hasattr(jax, 'debug_key_reuse')
+                       else jax.enable_key_reuse_checks)
 
 # Parse absl flags test_srcdir and test_tmpdir.
 jax.config.parse_flags_with_absl()
@@ -82,10 +86,10 @@ def decorated_MLP(transform: Callable = id_fn):
   return MLP
 
 
-class TransformTest(absltest.TestCase):
+class TransformTest(parameterized.TestCase):
 
   def test_jit(self):
-    key1, key2 = random.split(random.PRNGKey(3), 2)
+    key1, key2 = random.split(random.key(3), 2)
     x = random.uniform(key1, (4, 4))
 
     normal_model = TransformedMLP(features=[3, 4, 5])
@@ -97,7 +101,7 @@ class TransformTest(absltest.TestCase):
     self.assertTrue(np.all(y1 == y2))
 
   def test_jit_decorated(self):
-    key1, key2 = random.split(random.PRNGKey(3), 2)
+    key1, key2 = random.split(random.key(3), 2)
     x = random.uniform(key1, (4, 4))
 
     normal_model = decorated_MLP()(features=[3, 4, 5])
@@ -109,7 +113,7 @@ class TransformTest(absltest.TestCase):
     self.assertTrue(np.all(y1 == y2))
 
   def test_remat(self):
-    key1, key2 = random.split(random.PRNGKey(3), 2)
+    key1, key2 = random.split(random.key(3), 2)
     x = random.uniform(key1, (4, 4))
 
     normal_model = TransformedMLP(features=[3, 4, 5])
@@ -121,7 +125,7 @@ class TransformTest(absltest.TestCase):
     self.assertTrue(np.all(y1 == y2))
 
   def test_remat_decorated(self):
-    key1, key2 = random.split(random.PRNGKey(3), 2)
+    key1, key2 = random.split(random.key(3), 2)
     x = random.uniform(key1, (4, 4))
 
     normal_model = decorated_MLP()(features=[3, 4, 5])
@@ -141,7 +145,7 @@ class TransformTest(absltest.TestCase):
       def __call__(self, input, apply_relu: bool = False):
         return nn.relu(input) if apply_relu else input
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = jnp.ones((4, 4)) * -1
     remat_model = nn.remat(ConditionalReLU)()
     p = remat_model.init(key, x)
@@ -172,7 +176,7 @@ class TransformTest(absltest.TestCase):
     foo = FooRemat(train_is_static=True)
 
     x = jnp.empty((1, 2))
-    variables = foo.init(random.PRNGKey(0), x, True)
+    variables = foo.init(random.key(0), x, True)
     y = foo.apply(variables, x, False)
     self.assertEqual(y.shape, (1, 3))
 
@@ -180,7 +184,7 @@ class TransformTest(absltest.TestCase):
     FooRemat = nn.remat(Foo, static_argnums=())
     foo = FooRemat(train_is_static=False)
 
-    variables = foo.init(random.PRNGKey(0), x, True)
+    variables = foo.init(random.key(0), x, True)
     y = foo.apply(variables, x, False)
     self.assertEqual(y.shape, (1, 3))
 
@@ -200,7 +204,7 @@ class TransformTest(absltest.TestCase):
     foo = FooTrainStatic()
 
     x = jnp.empty((1, 2))
-    variables = foo.init(random.PRNGKey(0), x, True)
+    variables = foo.init(random.key(0), x, True)
     y = foo.apply(variables, x, False)
     self.assertEqual(y.shape, (1, 3))
 
@@ -216,14 +220,14 @@ class TransformTest(absltest.TestCase):
     # set train as a non-static arguments
     foo = FooTrainDynamic()
 
-    variables = foo.init(random.PRNGKey(0), x, True)
+    variables = foo.init(random.key(0), x, True)
     y = foo.apply(variables, x, False)
     self.assertEqual(y.shape, (1, 3))
 
   def test_vmap(self):
-    key1, key2 = random.split(random.PRNGKey(3), 2)
+    key1, key2, key3 = random.split(random.key(3), 3)
     x = random.uniform(key1, (4, 4))
-    x2 = random.uniform(key1, (5, 4, 4))
+    x2 = random.uniform(key2, (5, 4, 4))
 
     def vmap(cls):
       return nn.vmap(
@@ -235,21 +239,19 @@ class TransformTest(absltest.TestCase):
 
     normal_model = TransformedMLP(features=[3, 4, 5])
     vmap_model = TransformedMLP(features=[3, 4, 5], transform=vmap)
-    init_variables = normal_model.init(key2, x)
+    init_variables = normal_model.init(key3, x)
     # simulate vmap in python for comparison:
-    y1 = jnp.vstack(
-        [
-            normal_model.apply(init_variables, x2[i])[None, ...]
-            for i in np.arange(x2.shape[0])
-        ]
-    )
+    y1 = jnp.vstack([
+        normal_model.apply(init_variables, x2[i])[None, ...]
+        for i in np.arange(x2.shape[0])
+    ])
     y2 = vmap_model.apply(init_variables, x2)
     np.testing.assert_allclose(y1, y2, atol=1e-7)
 
   def test_vmap_decorated(self):
-    key1, key2 = random.split(random.PRNGKey(3), 2)
+    key1, key2, key3 = random.split(random.key(3), 3)
     x = random.uniform(key1, (4, 4))
-    x2 = random.uniform(key1, (5, 4, 4))
+    x2 = random.uniform(key2, (5, 4, 4))
 
     def vmap(fn):
       return nn.vmap(
@@ -261,21 +263,19 @@ class TransformTest(absltest.TestCase):
 
     normal_model = decorated_MLP()(features=[3, 4, 5])
     vmap_model = decorated_MLP(vmap)(features=[3, 4, 5])
-    init_variables = normal_model.init(key2, x)
+    init_variables = normal_model.init(key3, x)
     # simulate vmap in python for comparison:
-    y1 = jnp.vstack(
-        [
-            normal_model.apply(init_variables, x2[i])[None, ...]
-            for i in np.arange(x2.shape[0])
-        ]
-    )
+    y1 = jnp.vstack([
+        normal_model.apply(init_variables, x2[i])[None, ...]
+        for i in np.arange(x2.shape[0])
+    ])
     y2 = vmap_model.apply(init_variables, x2)
     np.testing.assert_allclose(y1, y2, atol=1e-7)
 
   def test_vmap_batchnorm(self):
-    key1, key2 = random.split(random.PRNGKey(3), 2)
+    key1, key2, key3 = random.split(random.key(3), 3)
     x = random.uniform(key1, (4, 4))
-    x2 = random.uniform(key1, (5, 4, 4))
+    x2 = random.uniform(key2, (5, 4, 4))
 
     def vmap(cls):
       return nn.vmap(
@@ -297,7 +297,7 @@ class TransformTest(absltest.TestCase):
 
     normal_model = MlpBn()
     vmap_model = vmap(MlpBn)(axis_name='batch')
-    init_variables = normal_model.init(key2, x)
+    init_variables = normal_model.init(key3, x)
     y1 = normal_model.apply(
         init_variables, x2.reshape((-1, 4)), mutable=['batch_stats']
     )[0]
@@ -318,9 +318,9 @@ class TransformTest(absltest.TestCase):
         )
         return LSTM(self.features, name='lstm_cell')(c, xs)
 
-    key1, key2 = random.split(random.PRNGKey(0), 2)
+    key1, key2 = random.split(random.key(0), 2)
     xs = random.uniform(key1, (5, 3, 2))
-    dummy_rng = random.PRNGKey(0)
+    dummy_rng = random.key(0)
     init_carry = nn.LSTMCell(2).initialize_carry(dummy_rng, xs[0].shape)
     model = SimpleScan(2)
     init_variables = model.init(key2, init_carry, xs)
@@ -355,10 +355,10 @@ class TransformTest(absltest.TestCase):
         assert b.shape == (4,)
         return nn.LSTMCell(self.features, name='lstm_cell')(c, xs)
 
-    key1, key2 = random.split(random.PRNGKey(0), 2)
+    key1, key2 = random.split(random.key(0), 2)
     xs = random.uniform(key1, (4, 3, 2))
     b = jnp.ones((4,))
-    dummy_rng = random.PRNGKey(0)
+    dummy_rng = random.key(0)
     init_carry = nn.LSTMCell(2).initialize_carry(dummy_rng, xs[0].shape)
     model = SimpleScan(2)
     init_variables = model.init(key2, init_carry, b, xs)
@@ -377,6 +377,37 @@ class TransformTest(absltest.TestCase):
     np.testing.assert_allclose(y1, y2, atol=1e-7)
     np.testing.assert_allclose(c[0], c2[0], atol=1e-7)
     np.testing.assert_allclose(c[1], c2[1], atol=1e-7)
+
+  def test_scan_negative_axes(self):
+    class Foo(nn.Module):
+
+      @nn.compact
+      def __call__(self, _, x):
+        x = nn.Dense(4)(x)
+        return None, x
+
+    class Bar(nn.Module):
+
+      @nn.compact
+      def __call__(self, x):
+        _, x = nn.scan(
+            Foo,
+            variable_broadcast='params',
+            split_rngs=dict(params=False),
+            in_axes=1,
+            out_axes=-1,
+        )()(None, x)
+        return x
+
+    y, variables = Bar().init_with_output(
+        {'params': jax.random.PRNGKey(0)},
+        jax.random.normal(jax.random.PRNGKey(1), shape=[1, 2, 3]),
+    )
+    params = variables['params']
+
+    self.assertEqual(y.shape, (1, 4, 2))
+    self.assertEqual(params['ScanFoo_0']['Dense_0']['kernel'].shape, (3, 4))
+    self.assertEqual(params['ScanFoo_0']['Dense_0']['bias'].shape, (4,))
 
   def test_multiscope_lifting_simple(self):
     class Counter(nn.Module):
@@ -413,9 +444,9 @@ class TransformTest(absltest.TestCase):
         return res
 
     x = jnp.ones((10, 10))
-    rngs = random.PRNGKey(0)
-    init_vars = Test(None).init(rngs, x)
-    _, new_vars = Test(None).apply(init_vars, x, mutable=['counter'])
+    rngs = random.key(0)
+    init_vars = Test(parent=None).init(rngs, x)
+    _, new_vars = Test(parent=None).apply(init_vars, x, mutable=['counter'])
     self.assertEqual(
         init_vars['counter']['outer']['cntr']['foo'], jnp.array([2], jnp.int32)
     )
@@ -461,9 +492,9 @@ class TransformTest(absltest.TestCase):
         return res
 
     x = jnp.ones((1, 1))
-    rngs = random.PRNGKey(0)
-    init_vars = Test(None).init(rngs, x)
-    _, new_vars = Test(None).apply(init_vars, x, mutable=['counter'])
+    rngs = random.key(0)
+    init_vars = Test(parent=None).init(rngs, x)
+    _, new_vars = Test(parent=None).apply(init_vars, x, mutable=['counter'])
     self.assertEqual(
         init_vars['counter']['outer']['cntr']['foo'], jnp.array([2], jnp.int32)
     )
@@ -507,9 +538,9 @@ class TransformTest(absltest.TestCase):
         return res
 
     x = jnp.ones((1, 1))
-    rngs = random.PRNGKey(0)
-    init_vars = Test(None).init(rngs, x)
-    _, new_vars = Test(None).apply(init_vars, x, mutable=['counter'])
+    rngs = random.key(0)
+    init_vars = Test(parent=None).init(rngs, x)
+    _, new_vars = Test(parent=None).apply(init_vars, x, mutable=['counter'])
     self.assertEqual(
         init_vars['counter']['outer1']['cntr']['foo'], jnp.array([2], jnp.int32)
     )
@@ -562,9 +593,9 @@ class TransformTest(absltest.TestCase):
         return res
 
     x = jnp.ones((1, 1))
-    rngs = random.PRNGKey(0)
-    init_vars = Test(None).init(rngs, x)
-    _, new_vars = Test(None).apply(init_vars, x, mutable=['counter'])
+    rngs = random.key(0)
+    init_vars = Test(parent=None).init(rngs, x)
+    _, new_vars = Test(parent=None).apply(init_vars, x, mutable=['counter'])
     self.assertEqual(
         init_vars['counter']['outer1']['cntr']['foo'], jnp.array([2], jnp.int32)
     )
@@ -618,9 +649,9 @@ class TransformTest(absltest.TestCase):
         return res
 
     x = jnp.ones((1, 1))
-    rngs = random.PRNGKey(0)
-    init_vars = Test(None).init(rngs, x)
-    _, new_vars = Test(None).apply(init_vars, x, mutable=['counter'])
+    rngs = random.key(0)
+    init_vars = Test(parent=None).init(rngs, x)
+    _, new_vars = Test(parent=None).apply(init_vars, x, mutable=['counter'])
     self.assertEqual(
         init_vars['counter']['outer']['cntr']['foo'], jnp.array([2], jnp.int32)
     )
@@ -661,9 +692,9 @@ class TransformTest(absltest.TestCase):
         return res
 
     x = jnp.ones((3, 1, 2))
-    rngs = random.PRNGKey(0)
-    init_vars = Test(None).init(rngs, x)
-    y = Test(None).apply(init_vars, x)
+    rngs = random.key(0)
+    init_vars = Test(parent=None).init(rngs, x)
+    y = Test(parent=None).apply(init_vars, x)
     self.assertEqual(
         init_vars['params']['outer']['Dense_0']['kernel'].shape, (3, 2, 5)
     )
@@ -688,7 +719,7 @@ class TransformTest(absltest.TestCase):
         variable_axes={'params': 0},
         split_rngs={'params': True},
     )
-    variables = FooVmap().init(random.PRNGKey(0), jnp.ones((4,)))
+    variables = FooVmap().init(random.key(0), jnp.ones((4,)))
     self.assertEqual(variables['params']['test'].shape, (4,))
 
   def test_nested_module_args_vmap(self):
@@ -724,7 +755,7 @@ class TransformTest(absltest.TestCase):
         c = C(b)
         return c(x)
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = jnp.ones((10, 10))
     p = D().init(key, x)
 
@@ -771,7 +802,7 @@ class TransformTest(absltest.TestCase):
         c = C(a2, b)
         return c(x)
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = jnp.ones((10, 10))
     p = D().init(key, x)
 
@@ -825,7 +856,7 @@ class TransformTest(absltest.TestCase):
         mdl = partial(Repeat, mdl)
       return mdl()
 
-    _ = nested_repeat(Counter).init(random.PRNGKey(0), jnp.ones((2,)))
+    _ = nested_repeat(Counter).init(random.key(0), jnp.ones((2,)))
     # setup_cntr == 128 due to 1 call in Counter.setup by _validate_setup
     # and 1 further "real" call.
     self.assertEqual(setup_cntr, 128)
@@ -859,7 +890,7 @@ class TransformTest(absltest.TestCase):
         y2 = self.a.bar(x)
         return y1, y2
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = jnp.ones((2,))
     (y1, y2), _ = B().init_with_output(key, x)
     np.testing.assert_array_equal(y1, y2)
@@ -912,7 +943,7 @@ class TransformTest(absltest.TestCase):
         c = C(a2, b)
         return c(x)
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = jnp.ones((10, 10))
     p1 = D().init(key, x)
     y1 = D().apply(p1, x)
@@ -920,16 +951,14 @@ class TransformTest(absltest.TestCase):
     a1 = A()
     a2 = A()
     b = B(a1)
-    p2 = freeze(
-        {
-            'params': {
-                'A': p1['params']['A_0'],
-                'B': {
-                    'A': p1['params']['A_1'],
-                },
-            }
+    p2 = freeze({
+        'params': {
+            'A': p1['params']['A_0'],
+            'B': {
+                'A': p1['params']['A_1'],
+            },
         }
-    )
+    })
 
     # Test method wrapper transform.
     y2 = C(a2, b).apply(p2, x)
@@ -969,7 +998,7 @@ class TransformTest(absltest.TestCase):
         split_rngs={'params': False},
     )(As)
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = jnp.ones((10, 2))
 
     p = B(As).init(key, x, x)
@@ -995,7 +1024,7 @@ class TransformTest(absltest.TestCase):
     )
 
   def test_partially_applied_module_constructor_transform(self):
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((3, 4, 4))
     dense = partial(nn.Dense, use_bias=False)
     vmap_dense = nn.vmap(
@@ -1011,7 +1040,7 @@ class TransformTest(absltest.TestCase):
     self.assertTrue(tree_equals(init_vars_shapes, ref_var_shapes))
 
   def test_partial_module_method(self):
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((3, 4, 4))
 
     class Foo(nn.Module):
@@ -1049,7 +1078,7 @@ class TransformTest(absltest.TestCase):
         baz.value += x
         return baz.value
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((1,))
     variables = Test().init(k, x)
     np.testing.assert_allclose(
@@ -1091,7 +1120,7 @@ class TransformTest(absltest.TestCase):
       def call_instance_arg_in_method(self, x, inner):
         return inner(x)
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((1,))
     variables = Test().init(k, x)
     np.testing.assert_allclose(
@@ -1141,7 +1170,7 @@ class TransformTest(absltest.TestCase):
         outer = Outer(name='outer')
         return outer(inner, x)
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((1,))
     variables = Test().init(k, x)
     np.testing.assert_allclose(
@@ -1187,7 +1216,7 @@ class TransformTest(absltest.TestCase):
         y = VarUser(baz)(x)
         return y
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((1,))
     variables = VarPasser().init(k, x)
     np.testing.assert_allclose(
@@ -1292,7 +1321,7 @@ class TransformTest(absltest.TestCase):
 
     x = jnp.ones((2, 4))
     ae = TiedAutencoder(4, 5)
-    variables = ae.init(random.PRNGKey(0), x)
+    variables = ae.init(random.key(0), x)
     param_shapes = jax.tree_util.tree_map(jnp.shape, variables['params'])
     self.assertEqual(param_shapes, {'Dense_0': {'kernel': (4, 5)}})
 
@@ -1309,7 +1338,7 @@ class TransformTest(absltest.TestCase):
 
     bw = BitWeights()
     x = jnp.ones((2, 4))
-    y, variables = bw.init_with_output(random.PRNGKey(0), x)
+    y, variables = bw.init_with_output(random.key(0), x)
     y_2 = bw.apply(variables, x)
     np.testing.assert_allclose(y, y_2)
 
@@ -1323,7 +1352,7 @@ class TransformTest(absltest.TestCase):
 
     x = jnp.ones((2, 8))
     model = BigModel()
-    variables = model.init(random.PRNGKey(0), x)
+    variables = model.init(random.key(0), x)
     param_shapes = jax.tree_util.tree_map(jnp.shape, variables['params'])
     self.assertEqual(param_shapes['dense_stack']['kernel'], (100, 8, 8))
     self.assertEqual(param_shapes['dense_stack']['bias'], (100, 8))
@@ -1348,7 +1377,7 @@ class TransformTest(absltest.TestCase):
 
     x = jnp.array([1.0, 2.0, 3.0])
     y = jnp.array([4.0, 5.0, 6.0])
-    params = Foo().init(random.PRNGKey(0), x, y)
+    params = Foo().init(random.key(0), x, y)
     params_grad, x_grad, y_grad = Foo().apply(params, x, y)
     self.assertEqual(
         params_grad,
@@ -1382,7 +1411,7 @@ class TransformTest(absltest.TestCase):
         return out_t
 
     x = jnp.ones((3,))
-    params = Foo().init(random.PRNGKey(0), x)
+    params = Foo().init(random.key(0), x)
     y_t = Foo().apply(params, x)
     np.testing.assert_allclose(y_t, jnp.ones_like(x))
 
@@ -1417,7 +1446,7 @@ class TransformTest(absltest.TestCase):
         return x
 
     a = A(b=B(c=C()))
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((1,), jnp.float32)
     vs = a.init(k, x)
     y, vs_new = a.apply(
@@ -1454,7 +1483,7 @@ class TransformTest(absltest.TestCase):
         return sign_grad(nn.Dense(1), x).reshape(())
 
     x = jnp.ones((2,))
-    variables = Foo().init(random.PRNGKey(0), x)
+    variables = Foo().init(random.key(0), x)
     grad = jax.grad(Foo().apply)(variables, x)
     for grad_leaf in jax.tree_util.tree_leaves(grad):
       self.assertTrue(jnp.all(jnp.abs(grad_leaf) == 1.0))
@@ -1474,7 +1503,7 @@ class TransformTest(absltest.TestCase):
       def __call__(self, x):
         return self.helper(x, self.inner)
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((2,))
     vs_foo = Foo().init(k, x)
 
@@ -1513,7 +1542,7 @@ class TransformTest(absltest.TestCase):
         a = nn.Dense(2, name='a')
         return self.helper(x, a)
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((2,))
     with self.assertRaises(errors.NameInUseError):
       vs = Foo().init(k, x)
@@ -1535,7 +1564,7 @@ class TransformTest(absltest.TestCase):
       def __call__(self, x):
         return x
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.array([1.0])
 
     with self.assertRaises(errors.NameInUseError):
@@ -1566,7 +1595,7 @@ class TransformTest(absltest.TestCase):
       def __call__(self, x):
         return self.helper(x, self.inners)
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((2,))
 
     vs_0 = Foo().init(k, x)
@@ -1591,7 +1620,7 @@ class TransformTest(absltest.TestCase):
       def __call__(self, x):
         return x
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.array([1.0])
 
     msg = r'Could not create submodule "subs_0".*'
@@ -1611,7 +1640,7 @@ class TransformTest(absltest.TestCase):
     scanbody = nn.scan(
         Body, variable_axes={'params': 0}, split_rngs={'params': True}, length=2
     )
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((1,))
     vs = scanbody().init(k, x)
     y = scanbody().apply(vs, x)
@@ -1656,8 +1685,8 @@ class TransformTest(absltest.TestCase):
         z, _ = sf.method_1(y, ys)
         return z
 
-    k = random.PRNGKey(0)
-    x = random.uniform(random.PRNGKey(1), (2, 2))
+    k = random.key(0)
+    x = random.uniform(random.key(1), (2, 2))
     vs = Bar().init(k, x)
     y = Bar().apply(vs, x)
 
@@ -1679,7 +1708,7 @@ class TransformTest(absltest.TestCase):
         x = nn.jit(Foo)(dense, dense)(x)
         return x
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.zeros((2, 2))
     _ = Bar().init(k, x)
 
@@ -1700,7 +1729,7 @@ class TransformTest(absltest.TestCase):
         x = nn.jit(Foo)(dense)(x, dense)
         return x
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.zeros((2, 2))
     _ = Bar().init(k, x)
 
@@ -1730,7 +1759,7 @@ class TransformTest(absltest.TestCase):
       def __call__(self, x):
         return self.b(self.a(x))
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((2, 2))
     vs = JitFoo().init(k, x)
     y0 = JitFoo().apply(vs, x)
@@ -1738,12 +1767,232 @@ class TransformTest(absltest.TestCase):
     y1 = Foo().apply(vs, x)
     np.testing.assert_array_equal(y0, y1)
 
+  def test_jit_kwargs(self):
+    class Foo(nn.Module):
+
+      @nn.jit
+      def __call__(self, a: jax.Array, b: jax.Array):
+        return a + b
+
+    m = Foo()
+    y = m.apply({}, jnp.array(1.0), b=jnp.array(2.0))
+
+    np.testing.assert_array_equal(y, jnp.array(3.0))
+
+  def test_jit_static_argnames(self):
+    s = None
+
+    class Foo(nn.Module):
+
+      @partial(nn.jit, static_argnames=['b'])
+      def __call__(self, a: jax.Array, b: str):
+        nonlocal s
+        s = b
+        return a
+
+    m = Foo()
+    y = m.apply({}, jnp.array(1.0), b='hi')
+
+    self.assertEqual(s, 'hi')
+    np.testing.assert_array_equal(y, jnp.array(1.0))
+
+  def test_jit_repr_hash(self):
+    n = 0
+
+    @partial(jax.jit, static_argnums=0)
+    def f(obj):
+      nonlocal n
+      n += 1
+      return None
+
+    f(_HashableProxy.from_module(nn.Dense(10)))
+    self.assertEqual(n, 1)
+    f(_HashableProxy.from_module(nn.Dense(10)))
+    self.assertEqual(n, 1)
+
+    f(_HashableProxy.from_module(nn.Dense(20)))
+    self.assertEqual(n, 2)
+    f(_HashableProxy.from_module(nn.Dense(20)))
+    self.assertEqual(n, 2)
+
+  def test_jit_reuse(self):
+    n = 0
+
+    class Foo(nn.Module):
+
+      @nn.jit
+      def __call__(self, x):
+        nonlocal n
+        n += 1
+        return x
+
+    x = jnp.array(1.0)
+    m = Foo()
+
+    self.assertEqual(n, 0)
+
+    y = m.apply({}, x)
+    self.assertEqual(n, 1)
+    y = m.apply({}, x)
+    self.assertEqual(n, 1)
+
+  @parameterized.named_parameters(('class', True), ('method', False))
+  def test_jit_reuse_hash(self, jit_class: bool):
+    n = 0
+
+    class Foo(nn.Module):
+      key: int
+
+      def __call__(self, x):
+        nonlocal n
+        n += 1
+        return x
+
+    if jit_class:
+      Foo = nn.jit(Foo)
+    else:  # jit method
+      Foo.__call__ = nn.jit(Foo.__call__)
+
+    x = jnp.array(1.0)
+    self.assertEqual(n, 0)
+
+    y = Foo(1).apply({}, x)
+    self.assertEqual(n, 1)
+    y = Foo(1).apply({}, x)
+    self.assertEqual(n, 1)
+    y = Foo(2).apply({}, x)
+    self.assertEqual(n, 2)
+    y = Foo(2).apply({}, x)
+    self.assertEqual(n, 2)
+
+  @parameterized.named_parameters(('class', True), ('method', False))
+  def test_jit_reuse_submodules(self, jit_class: bool):
+    test = self
+    n = 0
+    key = None
+    name = None
+
+    class Foo(nn.Module):
+      key: int
+
+      def __call__(self, x):
+        nonlocal n, key, name
+        n += 1
+        key = self.key
+        name = self.name
+        return x
+
+    if jit_class:
+      Foo = nn.jit(Foo)
+    else:  # jit method
+      Foo.__call__ = nn.jit(Foo.__call__)
+
+    class Parent(nn.Module):
+
+      @nn.compact
+      def __call__(self, x):
+
+        for i in range(3):
+          m = Foo(i)
+          y = m(x)
+          test.assertEqual(key, i)
+          test.assertEndsWith(name, f'Foo_{i}')
+          test.assertEqual(n, i + 1)
+
+    x = jnp.array(1.0)
+    self.assertEqual(n, 0)
+
+    y = Parent().apply({}, x)
+
+  @parameterized.named_parameters(('class', True), ('method', False))
+  def test_jit_reuse_nested_submodules(self, jit_class: bool):
+    test = self
+    n = 0
+
+    class Foo(nn.Module):
+      key: int
+
+      def __call__(self, x):
+        return x
+
+    class Parent(nn.Module):
+      submodules: list[Foo]
+
+      @nn.compact
+      def __call__(self, x):
+        nonlocal n
+        n += 1
+        for i, m in enumerate(self.submodules):
+          x = m(x)
+
+        return x
+
+    if jit_class:
+      Parent = nn.jit(Parent)
+    else:  # jit method
+      Parent.__call__ = nn.jit(Parent.__call__)
+
+    x = jnp.array(1.0)
+    self.assertEqual(n, 0)
+
+    y = Parent([Foo(1), Foo(2)]).apply({}, x)
+    self.assertEqual(n, 1)
+    y = Parent([Foo(1), Foo(2)]).apply({}, x)
+    self.assertEqual(n, 1)
+    y = Parent([Foo(3), Foo(4)]).apply({}, x)
+    self.assertEqual(n, 2)
+    y = Parent([Foo(3), Foo(4)]).apply({}, x)
+    self.assertEqual(n, 2)
+
+  def test_jit_hashes_serializable_types(self):
+    class Node:
+
+      def __init__(self, a: int):
+        self.a = a
+
+      def __hash__(self):
+        # test object is not being passed as static
+        raise Exception('this should not be called')
+
+      def __eq__(self, __value, /):
+        raise Exception('this should not be called')
+
+    def to_dict(node: Node):
+      return {'a': node.a}
+
+    def from_dict(node: Node, d: dict[str, Any]):
+      node.a = d['a']
+      return node
+
+    serialization.register_serialization_state(Node, to_dict, from_dict)
+
+    try:
+      n = 0
+
+      class Foo(nn.Module):
+        node: Node
+
+        @nn.jit
+        @nn.compact
+        def __call__(self, x):
+          nonlocal n
+          n += 1
+          return self.node.a + nn.Dense(2)(x)
+
+      m = Foo(Node(1))
+      m.init_with_output(random.key(0), jnp.ones((2, 2)))
+      self.assertEqual(n, 1)
+      m.init_with_output(random.key(0), jnp.ones((2, 2)))
+      self.assertEqual(n, 1)
+    finally:
+      del serialization._STATE_DICT_REGISTRY[Node]
+
   def test_while_loop(self):
     class Foo(nn.Module):
 
       @nn.compact
       def __call__(self, x):
-        key_zero = random.PRNGKey(0)
+        key_zero = random.key(0)
         key_zero = jnp.broadcast_to(key_zero, (2, *key_zero.shape))
         self.param('inc', lambda _: 1)
         self.put_variable('state', 'acc', 0)
@@ -1787,17 +2036,18 @@ class TransformTest(absltest.TestCase):
         {},
         x,
         mutable=True,
-        rngs={'params': random.PRNGKey(1), 'loop': random.PRNGKey(2)},
+        rngs={'params': random.key(1), 'loop': random.key(2)},
     )
     self.assertEqual(vars['state']['acc'], x)
     np.testing.assert_array_equal(
         vars['state']['rng_params'][0], vars['state']['rng_params'][1]
     )
-    np.testing.assert_array_compare(
-        operator.__ne__,
-        vars['state']['rng_loop'][0],
-        vars['state']['rng_loop'][1],
-    )
+    with jax_debug_key_reuse(False):
+      np.testing.assert_array_compare(
+          operator.__ne__,
+          vars['state']['rng_loop'][0],
+          vars['state']['rng_loop'][1],
+      )
 
   def test_cond(self):
     class Foo(nn.Module):
@@ -1842,7 +2092,7 @@ class TransformTest(absltest.TestCase):
 
     x = jnp.ones((1, 3))
     foo = Foo()
-    y1, vars = foo.init_with_output(random.PRNGKey(0), x, 0)
+    y1, vars = foo.init_with_output(random.key(0), x, 0)
     self.assertEqual(vars['state'], {'a_count': 1, 'b_count': 0, 'c_count': 0})
     y2, updates = foo.apply(vars, x, 1, mutable='state')
     vars = copy(vars, updates)
@@ -1882,7 +2132,7 @@ class TransformTest(absltest.TestCase):
 
     x = jnp.ones((1, 3))
     foo = Foo()
-    y1, vars = foo.init_with_output(random.PRNGKey(0), x, 0)
+    y1, vars = foo.init_with_output(random.key(0), x, 0)
     self.assertEqual(vars['state'], {'0_count': 1, '1_count': 0, '2_count': 0})
     y2, updates = foo.apply(vars, x, 1, mutable='state')
     vars = copy(vars, updates)
@@ -1924,7 +2174,7 @@ class TransformTest(absltest.TestCase):
         return nn.checkpoint(nn.Dense(2))(x)
 
     with self.assertRaises(errors.TransformTargetError):
-      Foo().init(random.PRNGKey(0), jnp.zeros((2, 3)))
+      Foo().init(random.key(0), jnp.zeros((2, 3)))
 
   def test_scan_compact_count(self):
     class Foo(nn.Module):
@@ -1945,7 +2195,7 @@ class TransformTest(absltest.TestCase):
 
     m = Foo()
     x = jnp.ones((3,))
-    v = m.init(jax.random.PRNGKey(0), x)
+    v = m.init(jax.random.key(0), x)
     self.assertEqual(v['params']['Dense_0']['kernel'].shape, (5, 3, 3))
     m.apply(v, x)
 
@@ -1969,7 +2219,7 @@ class TransformTest(absltest.TestCase):
     cond_model = CondModel()
 
     output, init_params = jax.jit(cond_model.init_with_output)(
-        jax.random.PRNGKey(0), x=jnp.ones(3)
+        jax.random.key(0), x=jnp.ones(3)
     )
 
   def test_add_metadata_axis(self):
@@ -1999,42 +2249,38 @@ class TransformTest(absltest.TestCase):
       def __call__(self, x):
         return Foo(name='foo')(x)
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = jnp.ones((4, 4), dtype=jnp.float32)
     vs = Test().init(k, x)
     y = Test().apply(vs, x)
-    outer_expect = jax.tree_map(
+    outer_expect = jax.tree_util.tree_map(
         jnp.shape,
-        freeze(
-            {
-                'params': {
-                    'foo': {
-                        'dense': {
-                            'kernel': nn.Partitioned(
-                                jnp.ones((4, 4)), names=('baz', 'foo', 'bar')
-                            )
-                        }
-                    }
-                }
-            }
-        ),
-    )
-    inner_expect = jax.tree_map(
-        jnp.shape,
-        freeze(
-            {
-                'params': {
+        freeze({
+            'params': {
+                'foo': {
                     'dense': {
                         'kernel': nn.Partitioned(
-                            jnp.ones((4, 4)), names=('foo', 'bar')
+                            jnp.ones((4, 4)), names=('baz', 'foo', 'bar')
                         )
                     }
                 }
             }
-        ),
+        }),
     )
-    self.assertEqual(jax.tree_map(jnp.shape, vs), outer_expect)
-    self.assertEqual(jax.tree_map(jnp.shape, vars_copy), inner_expect)
+    inner_expect = jax.tree_util.tree_map(
+        jnp.shape,
+        freeze({
+            'params': {
+                'dense': {
+                    'kernel': nn.Partitioned(
+                        jnp.ones((4, 4)), names=('foo', 'bar')
+                    )
+                }
+            }
+        }),
+    )
+    self.assertEqual(jax.tree_util.tree_map(jnp.shape, vs), outer_expect)
+    self.assertEqual(jax.tree_util.tree_map(jnp.shape, vars_copy), inner_expect)
 
   def test_outer_setup_called_with_sharing_across_transforms(self):
     class A(nn.Module):
@@ -2063,14 +2309,181 @@ class TransformTest(absltest.TestCase):
         a = self.a(x)
         return a + b
 
-    k = random.PRNGKey(0)
+    k = random.key(0)
     x = random.randint(k, (2, 2), minval=0, maxval=10)
     vs = C().init(k, x)
     y = C().apply(vs, x)
-    outer_expect = jax.tree_map(
+    outer_expect = jax.tree_util.tree_map(
         jnp.shape, freeze({'params': {'a': {'foo': jnp.zeros((2, 2))}}})
     )
-    self.assertEqual(jax.tree_map(jnp.shape, vs), outer_expect)
+    self.assertEqual(jax.tree_util.tree_map(jnp.shape, vs), outer_expect)
+
+  def test_grad_simple(self):
+    class LearnScale(nn.Module):
+
+      @nn.compact
+      def __call__(self, x, y):
+        p = self.param('scale', nn.initializers.ones_init(), ())
+        return jnp.sum(p * x * y)
+
+    class Foo(nn.Module):
+
+      @nn.compact
+      def __call__(self, x, y):
+        x_grad, y_grad = nn.grad(
+            lambda mdl, x, y: mdl(x, y), LearnScale(), x, y
+        )
+        return x_grad, y_grad
+
+    x = random.uniform(random.key(1), (4,))
+    y = random.uniform(random.key(2), (4,))
+    vs = Foo().init(random.key(0), x, y)
+
+    x_grad, y_grad = Foo().apply(vs, x, y)
+    self.assertTrue(tree_allclose(x_grad, y))
+    self.assertTrue(tree_allclose(y_grad, x))
+
+  def test_grad_simple_with_aux(self):
+    class LearnScale(nn.Module):
+
+      @nn.compact
+      def __call__(self, x, y):
+        p = self.param('scale', nn.initializers.ones_init(), ())
+        return jnp.sum(p * x * y), p
+
+    class Foo(nn.Module):
+
+      @nn.compact
+      def __call__(self, x, y):
+        (x_grad, y_grad), aux = nn.grad(
+            lambda mdl, x, y: mdl(x, y), LearnScale(), x, y, has_aux=True
+        )
+        return aux, x_grad, y_grad
+
+    x = random.uniform(random.key(1), (4,))
+    y = random.uniform(random.key(2), (4,))
+    vs = Foo().init(random.key(0), x, y)
+
+    aux, x_grad, y_grad = Foo().apply(vs, x, y)
+    self.assertTrue(tree_allclose(x_grad, y))
+    self.assertTrue(tree_allclose(y_grad, x))
+    self.assertTrue(tree_allclose(aux, vs['params']['LearnScale_0']['scale']))
+
+  def test_value_and_grad_simple(self):
+    class LearnScale(nn.Module):
+
+      @nn.compact
+      def __call__(self, x, y):
+        p = self.param('scale', nn.initializers.ones_init(), ())
+        return jnp.sum(p * x * y)
+
+    class Foo(nn.Module):
+
+      @nn.compact
+      def __call__(self, x, y):
+        z, (x_grad, y_grad) = nn.value_and_grad(
+            lambda mdl, x, y: mdl(x, y), LearnScale(), x, y
+        )
+        return z, x_grad, y_grad
+
+    x = random.uniform(random.key(1), (4,))
+    y = random.uniform(random.key(2), (4,))
+    vs = Foo().init(random.key(0), x, y)
+
+    z, x_grad, y_grad = Foo().apply(vs, x, y)
+    self.assertTrue(tree_allclose(x_grad, y))
+    self.assertTrue(tree_allclose(y_grad, x))
+
+  def test_value_and_grad_simple_with_aux(self):
+    class LearnScale(nn.Module):
+
+      @nn.compact
+      def __call__(self, x, y):
+        p = self.param('scale', nn.initializers.ones_init(), ())
+        return jnp.sum(p * x * y), p
+
+    class Foo(nn.Module):
+
+      @nn.compact
+      def __call__(self, x, y):
+        (z, aux), (x_grad, y_grad) = nn.value_and_grad(
+            lambda mdl, x, y: mdl(x, y), LearnScale(), x, y, has_aux=True
+        )
+        return z, aux, x_grad, y_grad
+
+    x = random.uniform(random.key(1), (4,))
+    y = random.uniform(random.key(2), (4,))
+    vs = Foo().init(random.key(0), x, y)
+
+    z, aux, x_grad, y_grad = Foo().apply(vs, x, y)
+    self.assertTrue(tree_allclose(x_grad, y))
+    self.assertTrue(tree_allclose(y_grad, x))
+    self.assertTrue(tree_allclose(aux, vs['params']['LearnScale_0']['scale']))
+
+  def test_value_and_grad_multiscope(self):
+    class Foo(nn.Module):
+      bar: nn.Module
+
+      @nn.compact
+      def __call__(self, x, y):
+        def fn(self, x, y):
+          qup = nn.Dense(y.shape[-1])
+          delta = y - self.bar(qup(x))
+          return jnp.sum(delta**2)
+
+        z, (x_grad, y_grad) = nn.value_and_grad(fn, self, x, y)
+        return z, x_grad, y_grad
+
+    class Baz(nn.Module):
+
+      @nn.compact
+      def __call__(self, x, y):
+        bar = nn.Dense(y.shape[-1])
+        return Foo(bar=bar)(x, y)
+
+    x = random.uniform(random.key(1), (4,))
+    y = random.uniform(random.key(2), (4,))
+    vs = Baz().init(random.key(0), x, y)
+    z, x_grad, y_grad = Baz().apply(vs, x, y)
+
+    def comparison_fn(x, y):
+      w1 = vs['params']['Foo_0']['Dense_0']['kernel']
+      w2 = vs['params']['Dense_0']['kernel']
+      delta = y - jnp.dot(jnp.dot(x, w1), w2)
+      return jnp.sum(delta**2)
+
+    self.assertTrue(tree_allclose(comparison_fn(x, y), z))
+    self.assertTrue(tree_allclose(jax.grad(comparison_fn, 0)(x, y), x_grad))
+    self.assertTrue(tree_allclose(jax.grad(comparison_fn, 1)(x, y), y_grad))
+
+  def test_value_and_grad_multiscope_adopted(self):
+    class Foo(nn.Module):
+      bar: nn.Module
+      qup: nn.Module
+
+      @nn.compact
+      def __call__(self, x, y):
+        def fn(self, x, y):
+          delta = y - self.bar(self.qup(x))
+          return jnp.sum(delta**2)
+
+        z, (x_grad, y_grad) = nn.value_and_grad(fn, self, x, y)
+        return z, x_grad, y_grad
+
+    x = random.uniform(random.key(1), (4,))
+    y = random.uniform(random.key(2), (4,))
+    vs = Foo(bar=nn.Dense(4), qup=nn.Dense(4)).init(random.key(0), x, y)
+    z, x_grad, y_grad = Foo(bar=nn.Dense(4), qup=nn.Dense(4)).apply(vs, x, y)
+
+    def comparison_fn(x, y):
+      w1 = vs['params']['qup']['kernel']
+      w2 = vs['params']['bar']['kernel']
+      delta = y - jnp.dot(jnp.dot(x, w1), w2)
+      return jnp.sum(delta**2)
+
+    self.assertTrue(tree_allclose(comparison_fn(x, y), z))
+    self.assertTrue(tree_allclose(jax.grad(comparison_fn, 0)(x, y), x_grad))
+    self.assertTrue(tree_allclose(jax.grad(comparison_fn, 1)(x, y), y_grad))
 
 
 if __name__ == '__main__':

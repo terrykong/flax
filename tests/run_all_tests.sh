@@ -82,7 +82,10 @@ if $RUN_DOCTEST; then
   # test build html
   sphinx-build -M html docs docs/_build -T
   # test docstrings
-  pytest -n auto flax --doctest-modules --suppress-no-test-exit-code
+  pytest -n auto flax \
+    --doctest-modules \
+    --suppress-no-test-exit-code \
+    --ignore=flax/experimental/nnx/examples
 fi
 
 # check that flax is running on editable mode
@@ -108,6 +111,8 @@ if $RUN_PYTEST; then
   # Run battery of core FLAX API tests.
   echo "pytest -n auto tests $PYTEST_OPTS $PYTEST_IGNORE"
   pytest -n auto tests $PYTEST_OPTS $PYTEST_IGNORE
+  # Run nnx tests
+  pytest -n auto flax/experimental/nnx/tests $PYTEST_OPTS $PYTEST_IGNORE
 
   # Per-example tests.
   #
@@ -115,21 +120,34 @@ if $RUN_PYTEST; then
   # In pytest foo/bar/baz_test.py and baz/bleep/baz_test.py will collide and error out when
   # /foo/bar and /baz/bleep aren't set up as packages.
   for egd in $(find examples -maxdepth 1 -mindepth 1 -type d); do
-      pytest $egd
+    # skip if folder starts with "_"
+    if [[ $egd == *"_"* ]]; then
+      continue
+    fi
+    pytest $egd
   done
+
+  for egd in $(find flax/experimental/nnx/examples -maxdepth 1 -mindepth 1 -type d); do
+    # skip if folder starts with "_" or is "toy_examples"
+    if [[ $egd == *"_"* ]] || [[ $egd == *"toy_examples"* ]]; then
+      continue
+    fi
+    pytest $egd
+  done
+
 fi
 
 if $RUN_PYTYPE; then
   echo "=== RUNNING PYTYPE ==="
   # Validate types in library code.
-  pytype --jobs auto --config pyproject.toml flax/
+  pytype --jobs auto --config pyproject.toml flax/ --exclude flax/experimental/nnx
 
   # Validate types in examples.
   for egd in $(find examples -maxdepth 1 -mindepth 1 -type d); do
       # use cd to make sure pytype cache lives in example dir and doesn't name clash
       # use *.py to avoid importing configs as a top-level import which leads to import errors
       # because config files use relative imports (e.g. from config import ...).
-      (cd $egd ; pytype --jobs auto --config ../../pyproject.toml "*.py")
+      (cd $egd ; pytype --jobs auto --exclude flax/experimental/nnx --config ../../pyproject.toml "*.py")
   done
 fi
 

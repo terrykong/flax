@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,16 +17,14 @@
 # See issue #620.
 # pytype: disable=wrong-keyword-args
 
-import functools
-from typing import Any, Tuple
+from typing import Tuple
 
 from flax import linen as nn
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 Array = jax.Array
-PRNGKey = jax.random.KeyArray
+PRNGKey = jax.Array
 LSTMCarry = Tuple[Array, Array]
 
 

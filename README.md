@@ -88,14 +88,14 @@ To install some additional dependencies (like `matplotlib`) that are required bu
 by some dependencies, you can use:
 
 ```bash
-pip install flax[all]
+pip install "flax[all]"
 ```
 
 ## What does Flax look like?
 
 We provide three examples using the Flax API: a simple multi-layer perceptron, a CNN and an auto-encoder.
 
-To learn more about the `Module` abstraction, check out our [docs](https://flax.readthedocs.io/), our [broad intro to the Module abstraction](https://github.com/google/flax/blob/main/docs/notebooks/linen_intro.ipynb). For additional concrete demonstrations of best practices, refer to our
+To learn more about the `Module` abstraction, check out our [docs](https://flax.readthedocs.io/), our [broad intro to the Module abstraction](https://github.com/google/flax/blob/main/docs/linen_intro.ipynb). For additional concrete demonstrations of best practices, refer to our
 [guides](https://flax.readthedocs.io/en/latest/guides/index.html) and
 [developer notes](https://flax.readthedocs.io/en/latest/developer_notes/index.html).
 
@@ -119,7 +119,7 @@ class MLP(nn.Module):
 
 model = MLP([12, 8, 4])
 batch = jnp.ones((32, 10))
-variables = model.init(jax.random.PRNGKey(0), batch)
+variables = model.init(jax.random.key(0), batch)
 output = model.apply(variables, batch)
 ```
 
@@ -142,7 +142,7 @@ class CNN(nn.Module):
 
 model = CNN()
 batch = jnp.ones((32, 64, 64, 10))  # (N, H, W, C) format
-variables = model.init(jax.random.PRNGKey(0), batch)
+variables = model.init(jax.random.key(0), batch)
 output = model.apply(variables, batch)
 ```
 
@@ -174,7 +174,7 @@ model = AutoEncoder(encoder_widths=[20, 10, 5],
                     decoder_widths=[5, 10, 20],
                     input_shape=(12,))
 batch = jnp.ones((16, 12))
-variables = model.init(jax.random.PRNGKey(0), batch)
+variables = model.init(jax.random.key(0), batch)
 encoded = model.apply(variables, batch, method=model.encode)
 decoded = model.apply(variables, encoded, method=model.decode)
 ```
@@ -197,7 +197,7 @@ To cite this repository:
   author = {Jonathan Heek and Anselm Levskaya and Avital Oliver and Marvin Ritter and Bertrand Rondepierre and Andreas Steiner and Marc van {Z}ee},
   title = {{F}lax: A neural network library and ecosystem for {JAX}},
   url = {http://github.com/google/flax},
-  version = {0.7.1},
+  version = {0.8.2},
   year = {2023},
 }
 ```

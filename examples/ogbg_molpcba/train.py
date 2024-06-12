@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -319,7 +319,7 @@ def train_and_evaluate(
 
   # Create and initialize the network.
   logging.info('Initializing network.')
-  rng = jax.random.PRNGKey(0)
+  rng = jax.random.key(0)
   rng, init_rng = jax.random.split(rng)
   init_graphs = next(datasets['train'].as_numpy_iterator())
   init_graphs = replace_globals(init_graphs)

@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ class TrainTest(absltest.TestCase):
 
   def test_cnn(self):
     """Tests CNN module used as the trainable model."""
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.key(0)
     inputs = jnp.ones((1, 28, 28, 3), jnp.float32)
     output, variables = train.CNN().init_with_output(rng, inputs)
 

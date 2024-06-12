@@ -1,4 +1,4 @@
-# Copyright 2023 The Flax Authors.
+# Copyright 2024 The Flax Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,12 +15,14 @@
 """Tests for flax.jax_utils."""
 
 from functools import partial
-from absl.testing import parameterized
+
 import chex
-from flax import jax_utils
 import jax
 import numpy as np
 import tensorflow as tf
+from absl.testing import parameterized
+
+from flax import jax_utils
 
 NDEV = 4
 
